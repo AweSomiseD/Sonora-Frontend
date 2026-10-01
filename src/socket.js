@@ -5,4 +5,15 @@ const socket = io("http://localhost:3000", {
   autoConnect: false, // hum khud control karenge kab connect ho
 });
 
+socket.isReady = false;
+socket.on("connect", () => {
+  socket.isReady = false;
+});
+socket.on("socket:ready", () => {
+  socket.isReady = true;
+});
+socket.on("disconnect", () => {
+  socket.isReady = false;
+});
+
 export default socket;

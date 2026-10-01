@@ -66,11 +66,11 @@ export const AuthProvider = ({ children }) => {
   const fetchCurrentUser = async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const response = await api.get("/auth/me", { skipAuthRefresh: true });
+      const response = await api.get("/auth/me");
       setUser(response.data.user);
     } catch (error) {
       console.log("Authentication check failed:", error);
-      setUser(null);
+      if (!silent) setUser(null);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -107,13 +107,59 @@ export const AuthProvider = ({ children }) => {
   // ========================================
 
   useEffect(() => {
-    if (isAuthenticated) {
-      socket.connect();
-    } else {
+    if (!isAuthenticated) {
       socket.disconnect();
+      return;
     }
 
+    const handleSocketReady = () => {
+      console.log("Socket is ready:", socket.id);
+    };
+
+    let isRefreshingSocketAuth = false;
+    const handleSocketError = (error) => {
+      console.error("Socket connection error:", error.message);
+
+      if (
+        isRefreshingSocketAuth ||
+        !/authentication required|invalid or expired access token/i.test(
+          error.message,
+        )
+      ) {
+        return;
+      }
+
+      isRefreshingSocketAuth = true;
+      api
+        .post("/auth/refresh")
+        .then(() => {
+          window.dispatchEvent(new Event("auth:token-refreshed"));
+        })
+        .catch((refreshError) => {
+          console.error(
+            "Unable to refresh authentication after socket rejection:",
+            refreshError,
+          );
+        })
+        .finally(() => {
+          isRefreshingSocketAuth = false;
+        });
+    };
+
+    const handleTokenRefresh = () => {
+      socket.disconnect();
+      socket.connect();
+    };
+
+    socket.on("socket:ready", handleSocketReady);
+    socket.on("connect_error", handleSocketError);
+    window.addEventListener("auth:token-refreshed", handleTokenRefresh);
+    socket.connect();
+
     return () => {
+      socket.off("socket:ready", handleSocketReady);
+      socket.off("connect_error", handleSocketError);
+      window.removeEventListener("auth:token-refreshed", handleTokenRefresh);
       socket.disconnect();
     };
   }, [isAuthenticated]);
@@ -129,6 +175,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error("Logout error:", error);
     } finally {
+      socket.disconnect();
       // Reload the public route so protected-route guards cannot redirect
       // during the state transition from authenticated to logged out.
       window.location.replace("/");

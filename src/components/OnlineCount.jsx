@@ -16,11 +16,7 @@ export const OnlineCount = () => {
     socket.on("online_count", handleCountUpdate);
     socket.on("connect", requestCount);
 
-    if (socket.connected) {
-      requestCount();
-    } else {
-      socket.connect();
-    }
+    if (socket.connected) requestCount();
 
     return () => {
       socket.off("online_count", handleCountUpdate);

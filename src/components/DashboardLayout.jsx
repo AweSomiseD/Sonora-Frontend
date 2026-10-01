@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import {
   FaHome,
@@ -17,6 +17,7 @@ import {
   FaMicrophone,
   FaShieldAlt,
   FaChartBar,
+  FaComments,
 } from "react-icons/fa";
 
 import LogoutModal from "./LogoutModel.jsx";
@@ -25,9 +26,26 @@ import {
   getDashboardChildPath,
   getDashboardPath,
 } from "../routes/routePaths.js";
+import api from "../services/api.js";
 
 export const DashboardLayout = () => {
   const { user, isArtist, logout, isListener, isAdmin } = useAuth();
+  const [unreadConversations, setUnreadConversations] = useState(0);
+  useEffect(() => {
+    if (!user || (!isListener && !isArtist)) return;
+
+    const fetchUnreadCount = async () => {
+      try {
+        const response = await api.get("/messages/unread-summary");
+
+        setUnreadConversations(response.data.conversations || 0);
+      } catch (error) {
+        console.error("Failed to fetch unread conversations:", error);
+      }
+    };
+
+    fetchUnreadCount();
+  }, [user, isListener, isArtist]);
   const dashboardPath = getDashboardPath(user?.role);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const handleLogout = async () => {
@@ -81,6 +99,21 @@ export const DashboardLayout = () => {
               </NavLink>
 
               <NavLink
+                to={getDashboardChildPath(user.role, "messages")}
+                className={linkClass}
+              >
+                <FaComments />
+
+                <span className="flex-1">Messages</span>
+
+                {unreadConversations > 0 && (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white">
+                    {unreadConversations > 9 ? "9+" : unreadConversations}
+                  </span>
+                )}
+              </NavLink>
+
+              <NavLink
                 to={getDashboardChildPath(user.role, "liked-songs")}
                 className={linkClass}
               >
@@ -126,6 +159,21 @@ export const DashboardLayout = () => {
               >
                 <FaCompactDisc />
                 Albums
+              </NavLink>
+
+              <NavLink
+                to={getDashboardChildPath(user.role, "messages")}
+                className={linkClass}
+              >
+                <FaComments />
+
+                <span className="flex-1">Messages</span>
+
+                {unreadConversations > 0 && (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white">
+                    {unreadConversations > 9 ? "9+" : unreadConversations}
+                  </span>
+                )}
               </NavLink>
 
               <NavLink

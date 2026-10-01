@@ -60,6 +60,7 @@ api.interceptors.response.use(
 
       // Waiting requests ko release karo
       onTokenRefreshed();
+      window.dispatchEvent(new Event("auth:token-refreshed"));
 
       // Original request dobara bhejo
       return api(originalRequest);

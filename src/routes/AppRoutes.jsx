@@ -34,6 +34,7 @@ import { ArtistDetails } from "../pages/ArtistDetails";
 import { AdminContent } from "../pages/AdminContent";
 import { AdminStats } from "../pages/AdminStats.jsx";
 import { AdminAuditLog } from "../pages/AdminAuditLog";
+import { Messages } from "../pages/Messages";
 
 export const AppRoutes = () => {
   const publicRoute = (element) => <PublicOnlyRoute>{element}</PublicOnlyRoute>;
@@ -80,6 +81,15 @@ export const AppRoutes = () => {
         <Route index element={<Dashboard />} />
         <Route path="profile" element={<Profile />} />
         <Route path="settings" element={<Settings />} />
+
+        <Route
+          path="messages"
+          element={
+            <RoleRoute allowedRoles={["listener", "artist"]}>
+              <Messages />
+            </RoleRoute>
+          }
+        />
 
         {/* Listener */}
         <Route path="discover" element={<Discover />} />
