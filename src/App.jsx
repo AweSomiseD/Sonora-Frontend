@@ -13,7 +13,9 @@ function App() {
     location.pathname === "/listener" ||
     location.pathname.startsWith("/listener/") ||
     location.pathname === "/admin" ||
-    location.pathname.startsWith("/admin/");
+    location.pathname.startsWith("/admin/") ||
+    location.pathname === "/payment/success" ||
+    location.pathname === "/payment/cancel";
 
   if (loading) {
     return (

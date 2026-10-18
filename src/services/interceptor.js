@@ -74,7 +74,10 @@ api.interceptors.response.use(
       // Sirf tab redirect karo jab already login page pe na ho —
       // warna reload loop ban jaata hai (login page → 401 → refresh fail → reload → repeat)
       const publicPaths = ["/login", "/register", "/", "/about"];
-      if (!publicPaths.includes(window.location.pathname)) {
+      const isPublicPath =
+        publicPaths.includes(window.location.pathname) ||
+        window.location.pathname.startsWith("/reset-password/");
+      if (!isPublicPath) {
         window.location.href = "/login";
       }
 

@@ -35,6 +35,9 @@ import { AdminContent } from "../pages/AdminContent";
 import { AdminStats } from "../pages/AdminStats.jsx";
 import { AdminAuditLog } from "../pages/AdminAuditLog";
 import { Messages } from "../pages/Messages";
+import { PaymentSuccess } from "../pages/PaymentSuccess";
+import { PaymentCancel } from "../pages/PaymentCancel";
+import { Pricing } from "../pages/Pricing";
 
 export const AppRoutes = () => {
   const publicRoute = (element) => <PublicOnlyRoute>{element}</PublicOnlyRoute>;
@@ -44,16 +47,14 @@ export const AppRoutes = () => {
       {/* ===== Public ===== */}
       <Route path="/" element={publicRoute(<Landing />)} />
       <Route path="/about" element={publicRoute(<About />)} />
+      <Route path="/payment/cancel" element={<PaymentCancel />} />
       <Route path="/login" element={publicRoute(<Login />)} />
       <Route path="/register" element={publicRoute(<Register />)} />
       <Route
         path="/verify-email/:token"
         element={publicRoute(<VerifyEmail />)}
       />
-      <Route
-        path="/reset-password/:token"
-        element={publicRoute(<ResetPassword />)}
-      />
+      <Route path="/reset-password/:token" element={<ResetPassword />} />
       <Route
         path="/forgot-password"
         element={publicRoute(<ForgotPassword />)}
@@ -68,6 +69,24 @@ export const AppRoutes = () => {
       <Route path="/artists/:artistId" element={<ArtistDetailsRedirect />} />
 
       {/* ===== Dashboard Workspace (role-based) ===== */}
+      <Route
+        path="/payment/success"
+        element={
+          <ProtectedRoute>
+            <PaymentSuccess />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/payment/cancel"
+        element={
+          <ProtectedRoute>
+            <PaymentCancel />
+          </ProtectedRoute>
+        }
+      />
+
       <Route
         path="/:role"
         element={
@@ -111,6 +130,15 @@ export const AppRoutes = () => {
           element={
             <RoleRoute allowedRoles={["listener"]}>
               <ArtistDetails />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="pricing"
+          element={
+            <RoleRoute allowedRoles={["listener", "artist"]}>
+              <Pricing />
             </RoleRoute>
           }
         />

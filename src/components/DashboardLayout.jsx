@@ -18,6 +18,7 @@ import {
   FaShieldAlt,
   FaChartBar,
   FaComments,
+  FaCrown,
 } from "react-icons/fa";
 
 import LogoutModal from "./LogoutModel.jsx";
@@ -54,39 +55,120 @@ export const DashboardLayout = () => {
   };
 
   const linkClass = ({ isActive }) =>
-    `flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition ${
+    `group relative flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all duration-300 ${
       isActive
-        ? "bg-amber-500/10 text-amber-500"
-        : "text-gray-400 hover:bg-gray-800 hover:text-white"
+        ? "bg-gradient-to-r from-violet-500/20 to-fuchsia-500/10 text-violet-300 shadow-[inset_0_0_20px_rgba(139,92,246,0.1)]"
+        : "text-gray-400 hover:bg-violet-500/5 hover:text-violet-200"
     }`;
 
   return (
-    <div className="flex min-h-screen bg-gray-950 text-white">
+    <div className="relative flex min-h-screen bg-gray-950 text-white">
+      {/* Keyframes */}
+      <style>{`
+        @keyframes sidebarOrb {
+          0%, 100% { opacity: 0.35; transform: scale(1); }
+          50% { opacity: 0.7; transform: scale(1.15); }
+        }
+        @keyframes gradientShift {
+          0%, 100% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+        }
+        @keyframes badgePulse {
+          0%, 100% { box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
+          50% { box-shadow: 0 0 16px rgba(239, 68, 68, 0.8); }
+        }
+        @keyframes logoGlow {
+          0%, 100% { box-shadow: 0 0 10px rgba(139, 92, 246, 0.4); }
+          50% { box-shadow: 0 0 22px rgba(139, 92, 246, 0.8); }
+        }
+        .nav-active-indicator::before {
+          content: '';
+          position: absolute;
+          left: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          height: 60%;
+          width: 3px;
+          border-radius: 0 4px 4px 0;
+          background: linear-gradient(180deg, #8b5cf6, #d946ef);
+          box-shadow: 0 0 10px rgba(139, 92, 246, 0.8);
+        }
+      `}</style>
+
+      {/* ========================================
+          Ambient background glow (behind everything)
+      ======================================== */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute -left-40 -top-40 h-96 w-96 animate-pulse rounded-full bg-violet-500/10 blur-[120px]" />
+        <div
+          className="absolute -bottom-40 left-1/4 h-96 w-96 animate-pulse rounded-full bg-fuchsia-600/8 blur-[120px]"
+          style={{ animationDelay: "2s" }}
+        />
+      </div>
+
       {/* ========================================
           Sidebar
       ======================================== */}
 
-      <aside className="flex w-64 shrink-0 flex-col border-r border-gray-800 bg-gray-900/50 p-5">
+      <aside className="relative z-10 flex w-64 shrink-0 flex-col border-r border-violet-500/10 bg-gray-900/60 p-5 backdrop-blur-xl">
+        {/* Sidebar internal glow orbs */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div
+            className="absolute -left-20 top-20 h-40 w-40 rounded-full bg-violet-500/10 blur-3xl"
+            style={{ animation: "sidebarOrb 6s ease-in-out infinite" }}
+          />
+          <div
+            className="absolute -right-20 bottom-40 h-40 w-40 rounded-full bg-fuchsia-500/8 blur-3xl"
+            style={{
+              animation: "sidebarOrb 8s ease-in-out infinite",
+              animationDelay: "2s",
+            }}
+          />
+        </div>
+
+        {/* Logo */}
         <NavLink
           to="/"
-          className="mb-8 flex items-center gap-2 text-xl font-bold text-amber-500"
+          className="group relative mb-8 flex items-center gap-2.5 text-xl font-black tracking-tight"
         >
-          Spookeify
+          <span
+            className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-linear-to-br from-violet-500 to-fuchsia-500 text-sm font-bold text-white"
+            style={{ animation: "logoGlow 3s ease-in-out infinite" }}
+          >
+            S
+          </span>
+          <span
+            className="bg-linear-to-r from-white via-violet-200 to-fuchsia-200 bg-clip-text text-transparent transition-all duration-300 group-hover:from-violet-200 group-hover:via-fuchsia-200 group-hover:to-purple-200"
+            style={{
+              backgroundSize: "200% auto",
+              animation: "gradientShift 4s ease infinite",
+            }}
+          >
+            Sonora
+          </span>
         </NavLink>
 
-        <nav className="flex flex-1 flex-col gap-1">
+        <nav className="relative flex flex-1 flex-col gap-1 overflow-y-auto scrollbar-thin">
           <NavLink to={dashboardPath} end className={linkClass}>
-            <FaHome />
+            <FaHome className="text-base" />
             Dashboard
           </NavLink>
 
           {isListener && (
             <>
               <NavLink
+                to={getDashboardChildPath(user.role, "pricing")}
+                className={linkClass}
+              >
+                <FaCrown className="text-base" />
+                Pricing
+              </NavLink>
+
+              <NavLink
                 to={getDashboardChildPath(user.role, "discover")}
                 className={linkClass}
               >
-                <FaCompass />
+                <FaCompass className="text-base" />
                 Discover
               </NavLink>
 
@@ -94,7 +176,7 @@ export const DashboardLayout = () => {
                 to={getDashboardChildPath(user.role, "album")}
                 className={linkClass}
               >
-                <FaCompactDisc />
+                <FaCompactDisc className="text-base" />
                 Albums
               </NavLink>
 
@@ -102,12 +184,15 @@ export const DashboardLayout = () => {
                 to={getDashboardChildPath(user.role, "messages")}
                 className={linkClass}
               >
-                <FaComments />
+                <FaComments className="text-base" />
 
                 <span className="flex-1">Messages</span>
 
                 {unreadConversations > 0 && (
-                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white">
+                  <span
+                    className="flex h-5 min-w-5 items-center justify-center rounded-full bg-linear-to-r from-red-500 to-rose-500 px-1.5 text-xs font-bold text-white"
+                    style={{ animation: "badgePulse 2s ease-in-out infinite" }}
+                  >
                     {unreadConversations > 9 ? "9+" : unreadConversations}
                   </span>
                 )}
@@ -117,28 +202,28 @@ export const DashboardLayout = () => {
                 to={getDashboardChildPath(user.role, "liked-songs")}
                 className={linkClass}
               >
-                <FaHeart /> Liked Songs
+                <FaHeart className="text-base" /> Liked Songs
               </NavLink>
 
               <NavLink
                 to={getDashboardChildPath(user.role, "recently-played")}
                 className={linkClass}
               >
-                <FaHistory /> Recently Played
+                <FaHistory className="text-base" /> Recently Played
               </NavLink>
 
               <NavLink
                 to={getDashboardChildPath(user.role, "following")}
                 className={linkClass}
               >
-                <FaUserFriends /> Following
+                <FaUserFriends className="text-base" /> Following
               </NavLink>
 
               <NavLink
                 to={getDashboardChildPath(user.role, "artists")}
                 className={linkClass}
               >
-                <FaMicrophone /> Artists
+                <FaMicrophone className="text-base" /> Artists
               </NavLink>
             </>
           )}
@@ -146,10 +231,18 @@ export const DashboardLayout = () => {
           {isArtist && (
             <>
               <NavLink
+                to={getDashboardChildPath(user.role, "pricing")}
+                className={linkClass}
+              >
+                <FaCrown className="text-base" />
+                Pricing
+              </NavLink>
+
+              <NavLink
                 to={getDashboardChildPath(user.role, "my-music")}
                 className={linkClass}
               >
-                <FaMusic />
+                <FaMusic className="text-base" />
                 My Music
               </NavLink>
 
@@ -157,7 +250,7 @@ export const DashboardLayout = () => {
                 to={getDashboardChildPath(user.role, "my-albums")}
                 className={linkClass}
               >
-                <FaCompactDisc />
+                <FaCompactDisc className="text-base" />
                 Albums
               </NavLink>
 
@@ -165,12 +258,15 @@ export const DashboardLayout = () => {
                 to={getDashboardChildPath(user.role, "messages")}
                 className={linkClass}
               >
-                <FaComments />
+                <FaComments className="text-base" />
 
                 <span className="flex-1">Messages</span>
 
                 {unreadConversations > 0 && (
-                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white">
+                  <span
+                    className="flex h-5 min-w-5 items-center justify-center rounded-full bg-linear-to-r from-red-500 to-rose-500 px-1.5 text-xs font-bold text-white"
+                    style={{ animation: "badgePulse 2s ease-in-out infinite" }}
+                  >
                     {unreadConversations > 9 ? "9+" : unreadConversations}
                   </span>
                 )}
@@ -180,7 +276,7 @@ export const DashboardLayout = () => {
                 to={getDashboardChildPath(user.role, "upload-music")}
                 className={linkClass}
               >
-                <FaCloudUploadAlt />
+                <FaCloudUploadAlt className="text-base" />
                 Upload Music
               </NavLink>
 
@@ -188,7 +284,7 @@ export const DashboardLayout = () => {
                 to={getDashboardChildPath(user.role, "create-album")}
                 className={linkClass}
               >
-                <FaPlus />
+                <FaPlus className="text-base" />
                 Create Album
               </NavLink>
             </>
@@ -200,21 +296,21 @@ export const DashboardLayout = () => {
                 to={getDashboardChildPath(user.role, "users")}
                 className={linkClass}
               >
-                <FaUsers />
+                <FaUsers className="text-base" />
                 Users
               </NavLink>
               <NavLink
                 to={getDashboardChildPath(user.role, "content")}
                 className={linkClass}
               >
-                <FaShieldAlt />
+                <FaShieldAlt className="text-base" />
                 Moderation
               </NavLink>
               <NavLink
                 to={getDashboardChildPath(user.role, "stats")}
                 className={linkClass}
               >
-                <FaChartBar />
+                <FaChartBar className="text-base" />
                 Stats
               </NavLink>
             </>
@@ -224,7 +320,7 @@ export const DashboardLayout = () => {
             to={getDashboardChildPath(user.role, "profile")}
             className={linkClass}
           >
-            <FaUser />
+            <FaUser className="text-base" />
             Profile
           </NavLink>
 
@@ -232,16 +328,17 @@ export const DashboardLayout = () => {
             to={getDashboardChildPath(user.role, "settings")}
             className={linkClass}
           >
-            <FaCog />
+            <FaCog className="text-base" />
             Settings
           </NavLink>
         </nav>
 
+        {/* Logout */}
         <button
           onClick={() => setIsLogoutModalOpen(true)}
-          className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-red-500 transition hover:bg-red-500/10"
+          className="group relative mt-3 flex cursor-pointer items-center gap-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm font-medium text-red-400 transition-all duration-300 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300 hover:shadow-[0_0_20px_rgba(239,68,68,0.25)]"
         >
-          <FaSignOutAlt />
+          <FaSignOutAlt className="text-base transition-transform duration-300 group-hover:-translate-x-0.5" />
           Logout
         </button>
       </aside>
@@ -250,14 +347,21 @@ export const DashboardLayout = () => {
           Main Content
       ======================================== */}
 
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-end border-b border-gray-800 bg-gray-900/30 px-8 py-4">
+      <div className="relative z-10 flex flex-1 flex-col">
+        <header className="flex items-center justify-end border-b border-violet-500/10 bg-gray-900/40 px-8 py-4 backdrop-blur-xl">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-500/10 text-sm font-bold text-amber-500">
-              {user?.username?.[0]?.toUpperCase() || "U"}
+            {/* Avatar */}
+            <div className="relative">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-linear-to-br from-violet-500 to-fuchsia-500 text-sm font-bold text-white shadow-[0_0_15px_rgba(139,92,246,0.5)]">
+                {user?.username?.[0]?.toUpperCase() || "U"}
+              </div>
+              {/* Online dot */}
+              <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-gray-900 bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
             </div>
 
-            <span className="text-sm font-medium">{user?.username}</span>
+            <span className="text-sm font-medium text-gray-200">
+              {user?.username}
+            </span>
           </div>
         </header>
 
