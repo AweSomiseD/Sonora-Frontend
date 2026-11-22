@@ -1,167 +1,105 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
-import { getDashboardPath } from "../routes/routePaths.js";
+import { useToast } from "../context/ToastContext.jsx";
+import { PASSWORD_RULES, isStrongPassword } from "../constants/index.js";
+import usePageTitle from "../hooks/usePageTitle.js";
+import { PasswordInput } from "../components/ui/index.jsx";
 import {
   FaMusic,
   FaCompactDisc,
-  FaHeadphones,
   FaUsers,
   FaUpload,
   FaRocket,
 } from "react-icons/fa";
 
-export const Register = () => {
-  const { register, isAuthenticated, loading, user } = useAuth();
-  const navigate = useNavigate();
+const USERNAME_RULE = /^[a-zA-Z0-9_.]{3,30}$/;
 
-  useEffect(() => {
-    if (!loading && isAuthenticated) {
-      if (window.location.pathname === "/register") {
-        navigate(getDashboardPath(user?.role), { replace: true });
-      }
-    }
-  }, [isAuthenticated, loading, navigate, user?.role]);
+export const Register = () => {
+  usePageTitle("Create account");
+  const { register } = useAuth();
+  const { showToast } = useToast();
+  const navigate = useNavigate();
 
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("listener");
+  // Optional: apply as an artist after verifying the email (admin approval needed)
+  const [wantsToBeArtist, setWantsToBeArtist] = useState(false);
   const [registerErrors, setRegisterErrors] = useState({});
   const [isRegistering, setIsRegistering] = useState(false);
+  const [registeredEmail, setRegisteredEmail] = useState("");
 
-  const [toast, setToast] = useState(null);
-  const [showToast, setShowToast] = useState(false);
-
-  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$/;
-  const isPasswordValid = (value = "") => value && passwordRegex.test(value);
-
-  useEffect(() => {
-    if (showToast) {
-      const timer = setTimeout(() => setShowToast(false), 3000);
-      return () => clearTimeout(timer);
+  const fieldError = (fieldName, value) => {
+    if (fieldName === "username") {
+      if (!value.trim()) return "Username is required";
+      if (!USERNAME_RULE.test(value.trim())) return "3-30 characters: letters, numbers, _ and . only";
     }
-  }, [showToast]);
-
-  const showToastMessage = (message, type = "success") => {
-    setToast({ message, type });
-    setShowToast(true);
-  };
-
-  const clearRegisterForm = () => {
-    setUsername("");
-    setEmail("");
-    setPassword("");
-    setRole("listener");
-    setRegisterErrors({});
+    if (fieldName === "email") {
+      if (!value.trim()) return "Email is required";
+      if (!/^\S+@\S+\.\S+$/.test(value.trim())) return "Email is invalid";
+    }
+    if (fieldName === "password") {
+      if (!value) return "Password is required";
+      if (!isStrongPassword(value)) return "Password does not meet the requirements below";
+    }
+    return null;
   };
 
   const validateRegisterField = (fieldName, value) => {
     const newErrors = { ...registerErrors };
-
-    switch (fieldName) {
-      case "username":
-        if (!value.trim()) newErrors.username = "Username is required";
-        else delete newErrors.username;
-        break;
-
-      case "email":
-        if (!value.trim()) newErrors.email = "Email is required";
-        else if (!/\S+@\S+\.\S+/.test(value))
-          newErrors.email = "Email is invalid";
-        else delete newErrors.email;
-        break;
-
-      case "password":
-        if (!value) delete newErrors.password;
-        else if (!isPasswordValid(value))
-          newErrors.password = "Password does not meet requirements";
-        else delete newErrors.password;
-        break;
-
-      default:
-        break;
-    }
-
+    const message = value ? fieldError(fieldName, value) : null;
+    if (message) newErrors[fieldName] = message;
+    else delete newErrors[fieldName];
     setRegisterErrors(newErrors);
   };
 
   const validateRegister = () => {
     const newErrors = {};
-
-    if (!username.trim()) newErrors.username = "Username is required";
-
-    if (!email.trim()) newErrors.email = "Email is required";
-    else if (!/\S+@\S+\.\S+/.test(email)) newErrors.email = "Email is invalid";
-
-    if (!password) newErrors.password = "Password is required";
-    else if (!isPasswordValid(password))
-      newErrors.password = "Password does not meet requirements";
-
-    if (!role) newErrors.role = "Role is required";
-
+    for (const [name, value] of [["username", username], ["email", email], ["password", password]]) {
+      const message = fieldError(name, value);
+      if (message) newErrors[name] = message;
+    }
     setRegisterErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleRegister = async (e) => {
     e.preventDefault();
+    if (!validateRegister()) return;
 
-    if (!validateRegister()) {
+    setIsRegistering(true);
+    const result = await register(username.trim(), email.trim(), password, wantsToBeArtist);
+    setIsRegistering(false);
+
+    if (result.success) {
+      setRegisteredEmail(email.trim());
+      showToast("Account created! Please verify your email.", "success");
       return;
     }
 
-    setIsRegistering(true);
-
-    try {
-      const result = await register(username, email, password, role);
-
-      if (result.success) {
-        clearRegisterForm();
-        showToastMessage("✅ Account registered successfully!", "success");
-
-        setTimeout(() => {
-          navigate("/login", { replace: true });
-        }, 1500);
-      } else {
-        showToastMessage(
-          `❌ ${result.message || "Registration failed."}`,
-          "error",
-        );
-        setIsRegistering(false);
-      }
-    } catch (error) {
-      console.error("Registration error:", error);
-      showToastMessage(
-        `❌ ${error.message || "Registration failed."}`,
-        "error",
-      );
-      setIsRegistering(false);
+    // Show server validation errors next to the right field
+    const serverErrors = {};
+    (result.errors || []).forEach((err) => {
+      if (["username", "email", "password"].includes(err.path)) serverErrors[err.path] = err.message;
+    });
+    if (result.code === "USER_EXISTS") {
+      serverErrors[result.message.toLowerCase().includes("username") ? "username" : "email"] = result.message;
     }
+    setRegisterErrors(serverErrors);
+    showToast(result.message || "Registration failed.", "error");
   };
 
-  const roleOptions = [
-    { value: "listener", label: "Listener" },
-    { value: "artist", label: "Artist" },
-  ];
-
-  // Password requirement checks
-  const passwordChecks = [
-    { label: "At least 8 characters", valid: password.length >= 8 },
-    { label: "One lowercase letter", valid: /[a-z]/.test(password) },
-    { label: "One uppercase letter", valid: /[A-Z]/.test(password) },
-    { label: "One number", valid: /\d/.test(password) },
-    { label: "One special character", valid: /[@$!%*?&]/.test(password) },
-  ];
+  const passwordChecks = PASSWORD_RULES.map((rule) => ({ label: rule.label, valid: rule.test(password) }));
 
   // Benefits for brand panel
   const benefits = [
-    { icon: FaMusic, text: "Discover thousands of tracks from new artists" },
+    { icon: FaMusic, text: "Discover tracks from independent artists" },
     {
       icon: FaCompactDisc,
       text: "Explore albums organized by independent creators",
     },
-    { icon: FaUpload, text: "Artists can upload and manage their own music" },
+    { icon: FaUpload, text: "Apply as an artist to upload your own music" },
     { icon: FaUsers, text: "Join a growing community of listeners & creators" },
   ];
 
@@ -199,73 +137,6 @@ export const Register = () => {
         />
       </div>
 
-      {/* Keyframes */}
-      <style>{`
-        @keyframes gridMove {
-          0% { transform: translate(0, 0); }
-          100% { transform: translate(60px, 60px); }
-        }
-        @keyframes gradientShift {
-          0%, 100% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-        }
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeInLeft {
-          from { opacity: 0; transform: translateX(-30px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes cardGlow {
-          0%, 100% { box-shadow: 0 0 40px rgba(139, 92, 246, 0.15), 0 0 80px rgba(217, 70, 239, 0.08); }
-          50% { box-shadow: 0 0 60px rgba(139, 92, 246, 0.25), 0 0 100px rgba(217, 70, 239, 0.12); }
-        }
-        @keyframes spinSlow {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes floatSlow {
-          0%, 100% { transform: translateY(0) scale(1); }
-          50% { transform: translateY(-15px) scale(1.05); }
-        }
-        .animate-fade-in-up {
-          animation: fadeInUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-        .animate-fade-in-left {
-          animation: fadeInLeft 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-      `}</style>
-
-      {/* ========================================
-          Toast
-      ======================================== */}
-      {showToast && toast && (
-        <div
-          className={`fixed right-6 top-6 z-50 transform transition-all duration-500 ${
-            showToast
-              ? "translate-x-0 opacity-100"
-              : "translate-x-full opacity-0"
-          }`}
-        >
-          <div
-            className={`flex min-w-[320px] max-w-md items-center gap-3 rounded-xl border-l-4 px-6 py-4 shadow-2xl backdrop-blur-md ${
-              toast.type === "success"
-                ? "border-emerald-500 bg-emerald-500/10 text-emerald-300 shadow-[0_10px_40px_rgba(16,185,129,0.25)]"
-                : "border-red-500 bg-red-500/10 text-red-300 shadow-[0_10px_40px_rgba(239,68,68,0.25)]"
-            }`}
-          >
-            <p className="font-semibold">{toast.message}</p>
-
-            <button
-              onClick={() => setShowToast(false)}
-              className="ml-auto text-gray-400 transition-colors hover:text-white"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ========================================
           Main Container — Two Column Layout
@@ -414,7 +285,22 @@ export const Register = () => {
                   <div className="mx-auto mt-3 h-1 w-20 rounded-full bg-linear-to-r from-violet-500 via-fuchsia-500 to-purple-500 shadow-[0_0_15px_rgba(139,92,246,0.6)]" />
                 </div>
 
-                <form className="flex flex-col gap-3" onSubmit={handleRegister}>
+                {registeredEmail ? (
+                  <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 text-center">
+                    <p className="text-lg font-bold text-white">Check your email</p>
+                    <p className="mt-2 text-sm text-gray-300">
+                      We sent a verification link to <b className="text-white">{registeredEmail}</b>. Open it, then log in.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => navigate("/login", { replace: true })}
+                      className="mt-4 min-h-10 cursor-pointer rounded-xl bg-linear-to-r from-violet-500 to-fuchsia-500 px-5 text-sm font-semibold text-white"
+                    >
+                      Go to login
+                    </button>
+                  </div>
+                ) : (
+                <form className="flex flex-col gap-3" onSubmit={handleRegister} noValidate>
                   {/* Username */}
                   <div>
                     <input
@@ -425,6 +311,8 @@ export const Register = () => {
                         validateRegisterField("username", e.target.value);
                       }}
                       placeholder="Username"
+                      aria-label="Username"
+                      autoComplete="username"
                       disabled={isRegistering}
                       className={`w-full rounded-xl border bg-gray-950/60 px-4 py-3 text-white outline-none transition-all duration-200 placeholder-gray-500 focus:ring-4 disabled:opacity-50 ${
                         registerErrors.username
@@ -450,6 +338,8 @@ export const Register = () => {
                         validateRegisterField("email", e.target.value);
                       }}
                       placeholder="Email"
+                      aria-label="Email"
+                      autoComplete="email"
                       disabled={isRegistering}
                       className={`w-full rounded-xl border bg-gray-950/60 px-4 py-3 text-white outline-none transition-all duration-200 placeholder-gray-500 focus:ring-4 disabled:opacity-50 ${
                         registerErrors.email
@@ -467,14 +357,15 @@ export const Register = () => {
 
                   {/* Password */}
                   <div>
-                    <input
-                      type="password"
+                    <PasswordInput
                       value={password}
                       onChange={(e) => {
                         setPassword(e.target.value);
                         validateRegisterField("password", e.target.value);
                       }}
                       placeholder="Password"
+                      aria-label="Password"
+                      autoComplete="new-password"
                       disabled={isRegistering}
                       className={`w-full rounded-xl border bg-gray-950/60 px-4 py-3 text-white outline-none transition-all duration-200 placeholder-gray-500 focus:ring-4 disabled:opacity-50 ${
                         registerErrors.password
@@ -490,21 +381,20 @@ export const Register = () => {
                     )}
                   </div>
 
-                  {/* Role select */}
-                  <div>
-                    <select
-                      value={role}
-                      onChange={(e) => setRole(e.target.value)}
+                  {/* Optional artist application (admin approval required) */}
+                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-violet-500/20 bg-violet-500/5 p-3 text-sm text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={wantsToBeArtist}
+                      onChange={(e) => setWantsToBeArtist(e.target.checked)}
                       disabled={isRegistering}
-                      className="w-full cursor-pointer rounded-xl border border-gray-700/50 bg-gray-950/60 px-4 py-3 text-white outline-none transition-all duration-200 focus:border-violet-500/60 focus:ring-4 focus:ring-violet-500/20 disabled:opacity-50 [&>option]:bg-gray-900 [&>option]:text-white"
-                    >
-                      {roleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                      className="mt-0.5 h-4 w-4 cursor-pointer accent-violet-500"
+                    />
+                    <span>
+                      I also want to apply as an artist
+                      <span className="block text-xs text-gray-500">Everyone starts as a listener. After you verify your email you can send an artist application; an admin approves it.</span>
+                    </span>
+                  </label>
 
                   {/* Password Requirements */}
                   <div className="mt-1 space-y-1.5 rounded-xl border border-gray-800/50 bg-gray-950/40 p-3 text-sm backdrop-blur-sm">
@@ -541,6 +431,7 @@ export const Register = () => {
                     </span>
                   </button>
                 </form>
+                )}
 
                 <div className="mt-6 text-center text-sm text-gray-400">
                   <p>

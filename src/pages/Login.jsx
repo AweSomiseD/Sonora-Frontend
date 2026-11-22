@@ -1,126 +1,105 @@
 import { useEffect, useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
+import { useToast } from "../context/ToastContext.jsx";
 import { getDashboardPath } from "../routes/routePaths.js";
+import api from "../services/api.js";
+import { GOOGLE_AUTH_URL } from "../config.js";
+import usePageTitle from "../hooks/usePageTitle.js";
+import { PasswordInput } from "../components/ui/index.jsx";
 import {
   FaMusic,
   FaCompactDisc,
   FaHeadphones,
   FaUsers,
-  FaCheckCircle,
 } from "react-icons/fa";
 
-export const Login = () => {
-  const { login, isAuthenticated, loading, user } = useAuth();
-  const navigate = useNavigate();
+const GOOGLE_ERRORS = {
+  google_failed: "Google sign-in failed. Please try again.",
+  google_state: "Your Google sign-in expired. Please try again.",
+  google_email_unverified: "Your Google email is not verified. Please verify it with Google first.",
+  banned: "This account has been banned.",
+};
 
-  useEffect(() => {
-    if (!loading && isAuthenticated) {
-      if (window.location.pathname === "/login") {
-        navigate(getDashboardPath(user?.role), { replace: true });
-      }
-    }
-  }, [isAuthenticated, loading, navigate, user?.role]);
+export const Login = () => {
+  usePageTitle("Log in");
+  const { login } = useAuth();
+  const { showToast } = useToast();
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
 
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginErrors, setLoginErrors] = useState({});
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-
-  const [toast, setToast] = useState(null);
-  const [showToast, setShowToast] = useState(false);
+  // Banner above the form: { tone, text, action? }
+  const [notice, setNotice] = useState(null);
+  const [resending, setResending] = useState(false);
 
   useEffect(() => {
-    if (showToast) {
-      const timer = setTimeout(() => setShowToast(false), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [showToast]);
-
-  const showToastMessage = (message, type = "success") => {
-    setToast({ message, type });
-    setShowToast(true);
-  };
+    const error = params.get("error");
+    if (error && GOOGLE_ERRORS[error]) setNotice({ tone: "error", text: GOOGLE_ERRORS[error] });
+    else if (params.get("session") === "expired") setNotice({ tone: "warning", text: "Your session expired. Please log in again." });
+  }, [params]);
 
   const validateLoginField = (fieldName, value) => {
     const newErrors = { ...loginErrors };
-
-    switch (fieldName) {
-      case "loginEmail":
-        if (!value.trim()) {
-          newErrors.loginEmail = "Email is required";
-        } else {
-          delete newErrors.loginEmail;
-        }
-        break;
-
-      case "loginPassword":
-        if (!value.trim()) {
-          newErrors.loginPassword = "Password is required";
-        } else {
-          delete newErrors.loginPassword;
-        }
-        break;
-
-      default:
-        break;
-    }
-
+    if (!value.trim()) newErrors[fieldName] = fieldName === "loginEmail" ? "Email or username is required" : "Password is required";
+    else delete newErrors[fieldName];
     setLoginErrors(newErrors);
   };
 
   const validateLogin = () => {
     const newErrors = {};
-
-    if (!loginEmail.trim()) {
-      newErrors.loginEmail = "Email is required";
-    }
-
-    if (!loginPassword.trim()) {
-      newErrors.loginPassword = "Password is required";
-    }
-
+    if (!loginEmail.trim()) newErrors.loginEmail = "Email or username is required";
+    if (!loginPassword) newErrors.loginPassword = "Password is required";
     setLoginErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const clearLoginForm = () => {
-    setLoginEmail("");
-    setLoginPassword("");
-    setLoginErrors({});
+  const resendVerification = async (email) => {
+    setResending(true);
+    try {
+      const { data } = await api.post("/auth/resend-verification", { email });
+      showToast(data.message, "success");
+    } catch (error) {
+      showToast(error.response?.data?.message || "Could not send the email", "error");
+    } finally {
+      setResending(false);
+    }
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (!validateLogin()) return;
 
-    if (!validateLogin()) {
+    setIsLoggingIn(true);
+    setNotice(null);
+    const result = await login(loginEmail.trim(), loginPassword);
+
+    if (result.success) {
+      showToast("Welcome back!", "success");
+      const next = params.get("next");
+      const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
+      navigate(safeNext || getDashboardPath(result.data?.user?.activeRole || result.data?.user?.role), { replace: true });
       return;
     }
 
-    setIsLoggingIn(true);
-
-    try {
-      const result = await login(loginEmail, loginPassword);
-
-      if (result.success) {
-        clearLoginForm();
-        showToastMessage("✅ Login successful! Welcome back.", "success");
-        navigate(getDashboardPath(result.data?.user?.role || user?.role), {
-          replace: true,
-        });
-      } else {
-        showToastMessage(`❌ ${result.message || "Login failed."}`, "error");
-        setIsLoggingIn(false);
-      }
-    } catch (error) {
-      console.error("Login error:", error);
-      showToastMessage(`❌ ${error.message || "Login failed."}`, "error");
-      setIsLoggingIn(false);
+    setIsLoggingIn(false);
+    if (result.code === "EMAIL_NOT_VERIFIED") {
+      const email = result.data?.email || loginEmail.trim();
+      setNotice({ tone: "warning", text: "Please verify your email first. Check your inbox (and spam folder).", resendFor: email });
+    } else if (result.code === "USE_GOOGLE_LOGIN") {
+      setNotice({ tone: "info", text: "This account uses Google sign-in. Use the Continue with Google button." });
+    } else if (result.code === "ACCOUNT_BANNED") {
+      setNotice({ tone: "error", text: result.message });
+    } else {
+      setNotice({ tone: "error", text: result.message || "Login failed." });
     }
   };
 
   const handleGoogleLogin = () => {
-    window.location.href = "http://localhost:3000/api/auth/google";
+    window.location.href = GOOGLE_AUTH_URL;
   };
 
   const featurePoints = [
@@ -164,73 +143,6 @@ export const Login = () => {
         />
       </div>
 
-      {/* Keyframes */}
-      <style>{`
-        @keyframes gridMove {
-          0% { transform: translate(0, 0); }
-          100% { transform: translate(60px, 60px); }
-        }
-        @keyframes gradientShift {
-          0%, 100% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-        }
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeInLeft {
-          from { opacity: 0; transform: translateX(-30px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes cardGlow {
-          0%, 100% { box-shadow: 0 0 40px rgba(139, 92, 246, 0.15), 0 0 80px rgba(217, 70, 239, 0.08); }
-          50% { box-shadow: 0 0 60px rgba(139, 92, 246, 0.25), 0 0 100px rgba(217, 70, 239, 0.12); }
-        }
-        @keyframes spinSlow {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes floatSlow {
-          0%, 100% { transform: translateY(0) scale(1); }
-          50% { transform: translateY(-15px) scale(1.05); }
-        }
-        .animate-fade-in-up {
-          animation: fadeInUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-        .animate-fade-in-left {
-          animation: fadeInLeft 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-      `}</style>
-
-      {/* ========================================
-          Toast
-      ======================================== */}
-      {showToast && toast && (
-        <div
-          className={`fixed right-6 top-6 z-50 transform transition-all duration-500 ${
-            showToast
-              ? "translate-x-0 opacity-100"
-              : "translate-x-full opacity-0"
-          }`}
-        >
-          <div
-            className={`flex min-w-[320px] max-w-md items-center gap-3 rounded-xl border-l-4 px-6 py-4 shadow-2xl backdrop-blur-md ${
-              toast.type === "success"
-                ? "border-emerald-500 bg-emerald-500/10 text-emerald-300 shadow-[0_10px_40px_rgba(16,185,129,0.25)]"
-                : "border-red-500 bg-red-500/10 text-red-300 shadow-[0_10px_40px_rgba(239,68,68,0.25)]"
-            }`}
-          >
-            <p className="font-semibold">{toast.message}</p>
-
-            <button
-              onClick={() => setShowToast(false)}
-              className="ml-auto text-gray-400 transition-colors hover:text-white"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ========================================
           Main Container — Two Column Layout
@@ -379,17 +291,45 @@ export const Login = () => {
                   <div className="mx-auto mt-3 h-1 w-20 rounded-full bg-linear-to-r from-violet-500 via-fuchsia-500 to-purple-500 shadow-[0_0_15px_rgba(139,92,246,0.6)]" />
                 </div>
 
-                <form className="flex flex-col gap-3" onSubmit={handleLogin}>
+                {notice && (
+                  <div
+                    role="alert"
+                    className={`mb-4 rounded-xl border px-4 py-3 text-sm ${
+                      notice.tone === "error"
+                        ? "border-red-500/30 bg-red-500/10 text-red-200"
+                        : notice.tone === "warning"
+                          ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                          : "border-violet-500/30 bg-violet-500/10 text-violet-100"
+                    }`}
+                  >
+                    <p>{notice.text}</p>
+                    {notice.resendFor && (
+                      <button
+                        type="button"
+                        onClick={() => resendVerification(notice.resendFor)}
+                        disabled={resending}
+                        className="mt-2 cursor-pointer font-semibold text-amber-200 underline disabled:opacity-60"
+                      >
+                        {resending ? "Sending..." : "Resend verification email"}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <form className="flex flex-col gap-3" onSubmit={handleLogin} noValidate>
                   {/* Email */}
                   <div>
                     <input
-                      type="email"
+                      type="text"
+                      autoComplete="username"
+                      aria-label="Email or username"
+                      aria-invalid={Boolean(loginErrors.loginEmail)}
                       value={loginEmail}
                       onChange={(e) => {
                         setLoginEmail(e.target.value);
                         validateLoginField("loginEmail", e.target.value);
                       }}
-                      placeholder="Email"
+                      placeholder="Email or username"
                       disabled={isLoggingIn}
                       className={`w-full rounded-xl border bg-gray-950/60 px-4 py-3 text-white outline-none transition-all duration-200 placeholder-gray-500 focus:ring-4 disabled:opacity-50 ${
                         loginErrors.loginEmail
@@ -407,8 +347,10 @@ export const Login = () => {
 
                   {/* Password */}
                   <div>
-                    <input
-                      type="password"
+                    <PasswordInput
+                      autoComplete="current-password"
+                      aria-label="Password"
+                      aria-invalid={Boolean(loginErrors.loginPassword)}
                       value={loginPassword}
                       onChange={(e) => {
                         setLoginPassword(e.target.value);

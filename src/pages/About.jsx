@@ -9,8 +9,18 @@ import {
   FaHeadphones,
   FaMicrophone,
 } from "react-icons/fa";
+import { useAuth } from "../context/AuthContext.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
+import { getDashboardPath } from "../routes/routePaths.js";
 
 export const About = () => {
+  usePageTitle("About");
+  const { user, activeRole, roles } = useAuth();
+  // Links depend on who is looking (visitor, listener, artist)
+  const startPath = user ? getDashboardPath(activeRole) : "/register";
+  const albumsPath = user ? (activeRole === "listener" ? "/listener/album" : getDashboardPath(activeRole)) : "/register";
+  const uploadPath = !user ? "/register" : roles.includes("artist") ? "/artist/upload-music" : "/listener/become-artist";
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-gray-950 text-white">
       {/* ========================================
@@ -65,54 +75,6 @@ export const About = () => {
         />
       </div>
 
-      {/* Custom keyframes */}
-      <style>{`
-        @keyframes gridMove {
-          0% { transform: translate(0, 0); }
-          100% { transform: translate(60px, 60px); }
-        }
-        @keyframes float {
-          0%, 100% { transform: translateY(0) rotate(0deg); }
-          50% { transform: translateY(-30px) rotate(10deg); }
-        }
-        @keyframes floatSlow {
-          0%, 100% { transform: translateY(0) scale(1); }
-          50% { transform: translateY(-15px) scale(1.05); }
-        }
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(30px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeInLeft {
-          from { opacity: 0; transform: translateX(-30px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes fadeInRight {
-          from { opacity: 0; transform: translateX(30px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes spinSlow {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes gradientShift {
-          0%, 100% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-        }
-        @keyframes ripple {
-          0% { transform: scale(1); opacity: 0.4; }
-          100% { transform: scale(1.8); opacity: 0; }
-        }
-        .animate-fade-in-up {
-          animation: fadeInUp 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-        .animate-fade-in-left {
-          animation: fadeInLeft 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-        .animate-fade-in-right {
-          animation: fadeInRight 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-      `}</style>
 
       {/* ========================================
           Hero Section
@@ -156,7 +118,7 @@ export const About = () => {
 
               <div className="mt-8 flex flex-wrap gap-4">
                 <NavLink
-                  to="/"
+                  to={startPath}
                   className="group relative flex items-center gap-3 overflow-hidden rounded-full bg-linear-to-r from-violet-500 to-fuchsia-500 px-7 py-3.5 font-bold text-white transition-all duration-300 hover:scale-105 hover:shadow-[0_0_40px_rgba(139,92,246,0.6)]"
                 >
                   <span className="absolute inset-0 -translate-x-full bg-linear-to-r from-transparent via-white/40 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
@@ -165,7 +127,7 @@ export const About = () => {
                 </NavLink>
 
                 <NavLink
-                  to="/album"
+                  to={albumsPath}
                   className="group flex items-center gap-3 rounded-full border border-gray-700/50 bg-gray-900/50 px-7 py-3.5 font-semibold text-white backdrop-blur-sm transition-all duration-300 hover:border-violet-500/50 hover:bg-violet-500/5 hover:text-violet-300"
                 >
                   Explore Albums
@@ -304,7 +266,7 @@ export const About = () => {
             </p>
           </div>
 
-          <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             {/* Feature 1 */}
             <div className="group relative overflow-hidden rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 p-6 backdrop-blur-sm transition-all duration-500 hover:-translate-y-2 hover:border-violet-500/30 hover:shadow-[0_20px_60px_-15px_rgba(139,92,246,0.4)]">
               <div className="absolute inset-0 bg-linear-to-br from-violet-500/8 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
@@ -416,12 +378,13 @@ export const About = () => {
                 </h2>
 
                 <p className="mt-4 max-w-xl leading-7 text-violet-100/90">
-                  Upload your tracks, organize them into albums and manage your
-                  releases through your dedicated artist dashboard.
+                  Apply from your listener account. Once an admin approves you,
+                  upload tracks, organize albums and follow your plays in
+                  Artist Studio.
                 </p>
 
                 <NavLink
-                  to="/create-music"
+                  to={uploadPath}
                   className="group/btn relative mt-7 inline-flex items-center gap-3 overflow-hidden rounded-full bg-gray-950 px-7 py-3.5 font-bold text-white transition-all duration-300 hover:scale-105 hover:shadow-[0_0_40px_rgba(139,92,246,0.7)]"
                 >
                   <span className="absolute inset-0 -translate-x-full bg-linear-to-r from-transparent via-violet-500/40 to-transparent transition-transform duration-700 group-hover/btn:translate-x-full" />
@@ -452,7 +415,7 @@ export const About = () => {
       ======================================== */}
 
       <section className="relative z-10 mx-auto max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {/* Stat 1 */}
           <div className="group relative overflow-hidden rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 p-7 text-center backdrop-blur-sm transition-all duration-500 hover:-translate-y-1 hover:border-violet-500/30 hover:shadow-[0_20px_60px_-15px_rgba(139,92,246,0.4)]">
             <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-violet-500/15 blur-3xl transition-all duration-500 group-hover:bg-violet-500/30" />

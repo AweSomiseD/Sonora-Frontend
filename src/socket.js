@@ -1,8 +1,9 @@
 import { io } from "socket.io-client";
+import { SOCKET_URL } from "./config.js";
 
-const socket = io("http://localhost:3000", {
-  withCredentials: true, // cookies (JWT) bhejne ke liye — auth mein kaam aayega
-  autoConnect: false, // hum khud control karenge kab connect ho
+const socket = io(SOCKET_URL, {
+  withCredentials: true, // sends the JWT cookies
+  autoConnect: false, // AuthContext decides when to connect
 });
 
 socket.isReady = false;

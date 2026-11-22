@@ -1,281 +1,200 @@
-import { useEffect, useState } from "react";
-import { FaUserShield, FaBan, FaCheckCircle, FaTrash } from "react-icons/fa";
-import { useAuth } from "../context/AuthContext";
+import { useState } from "react";
+import { FaBan, FaCheckCircle, FaEllipsisV, FaSearch, FaTrash, FaUserShield, FaUsers } from "react-icons/fa";
+import { Avatar, Badge, Button, ConfirmDialog, EmptyState, ErrorState, Input, LoadMore, PageHeader, Select, SkeletonList, Textarea } from "../components/ui/index.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
 import { useToast } from "../context/ToastContext.jsx";
-import api from "../services/api.js";
+import usePageTitle from "../hooks/usePageTitle.js";
+import usePaginatedList from "../hooks/usePaginatedList.js";
+import api, { getErrorMessage } from "../services/api.js";
+import { formatDate } from "../utils/format.js";
 
-const ROLE_OPTIONS = ["listener", "artist", "admin"];
+const ROLE_FILTERS = [
+  { value: "all", label: "All roles" },
+  { value: "listener", label: "Listeners" },
+  { value: "artist", label: "Artists" },
+  { value: "admin", label: "Admins" },
+];
+const STATUS_FILTERS = [
+  { value: "all", label: "Any status" },
+  { value: "active", label: "Active" },
+  { value: "banned", label: "Banned" },
+];
+const SORTS = [
+  { value: "newest", label: "Newest" },
+  { value: "oldest", label: "Oldest" },
+  { value: "username", label: "Username" },
+];
+const ROLE_TONE = { listener: "violet", artist: "fuchsia", admin: "yellow" };
 
 export const AdminUsers = () => {
-  const { user: currentUser } = useAuth();
+  usePageTitle("Users");
+  const { user: me } = useAuth();
   const { showToast } = useToast();
-  const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [filters, setFilters] = useState({ search: "", role: "all", status: "all", sort: "newest" });
+  const list = usePaginatedList("/admin/users", filters, { limit: 20 });
+  // action = { type: "ban" | "unban" | "delete" | "revoke" | "grant" | "admin-grant" | "admin-revoke", user }
+  const [action, setAction] = useState(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [menuFor, setMenuFor] = useState(null);
 
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [pendingUserId, setPendingUserId] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+  const replaceUser = (updated) => list.setItems((items) => items.map((u) => (u._id === updated._id ? updated : u)));
 
-  const fetchUsers = async (searchValue = search, roleValue = roleFilter) => {
+  const run = async () => {
+    if (!action) return;
+    const { type, user } = action;
+    setBusy(true);
     try {
-      setLoading(true);
-      setError("");
+      let response;
+      if (type === "ban" || type === "unban") response = await api.patch(`/admin/users/${user._id}/ban`, { reason: reason.trim() });
+      if (type === "delete") response = await api.delete(`/admin/users/${user._id}`);
+      if (type === "revoke") response = await api.patch(`/admin/users/${user._id}/revoke-artist`, { reason: reason.trim() });
+      if (type === "grant") response = await api.patch(`/admin/users/${user._id}/grant-artist`);
+      if (type === "admin-grant" || type === "admin-revoke") response = await api.patch(`/admin/users/${user._id}/admin`, { action: type === "admin-grant" ? "grant" : "revoke" });
 
-      const params = {};
-      if (searchValue.trim()) params.search = searchValue.trim();
-      if (roleValue) params.role = roleValue;
-
-      const response = await api.get("/admin/users", { params });
-
-      setUsers(response.data.users || []);
+      if (type === "delete") {
+        list.setItems((items) => items.filter((u) => u._id !== user._id));
+        list.setTotal((t) => Math.max(0, t - 1));
+      } else if (response?.data?.user) {
+        replaceUser(response.data.user);
+      }
+      showToast(response?.data?.message || "Done", "success");
+      setAction(null);
+      setReason("");
     } catch (error) {
-      console.error("Failed to fetch users:", error);
-      setError(error.response?.data?.message || "Unable to load users.");
+      showToast(getErrorMessage(error), "error");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchUsers(search, roleFilter);
-    }, 400);
+  const dialogText = action && {
+    ban: { title: `Ban ${action.user.username}?`, message: "They are logged out right away and cannot log in until you unban them.", confirm: "Ban user", withReason: true },
+    unban: { title: `Unban ${action.user.username}?`, message: "They will be able to log in again.", confirm: "Unban", tone: "primary" },
+    delete: { title: `Delete ${action.user.username}?`, message: "This permanently deletes the account and all their music, albums, playlists, messages and files. This cannot be undone.", confirm: "Delete forever" },
+    revoke: { title: `Remove artist access from ${action.user.username}?`, message: "Their tracks and albums are hidden and they go back to Listener mode. You can restore access later.", confirm: "Revoke artist", withReason: true },
+    grant: { title: `Make ${action.user.username} an artist?`, message: "They get artist access right away, without an application.", confirm: "Grant artist", tone: "primary" },
+    "admin-grant": { title: `Make ${action.user.username} an admin?`, message: "Admins can ban users and delete any content.", confirm: "Make admin", tone: "primary" },
+    "admin-revoke": { title: `Remove admin from ${action.user.username}?`, message: "They lose access to the admin dashboard.", confirm: "Remove admin" },
+  }[action.type];
 
-    return () => clearTimeout(timer);
-  }, [search, roleFilter]);
-
-  const handleRoleChange = async (userId, newRole) => {
-    setPendingUserId(userId);
-
-    try {
-      const response = await api.patch(`/admin/users/${userId}/role`, {
-        role: newRole,
-      });
-
-      setUsers((prev) =>
-        prev.map((u) => (u._id === userId ? response.data.user : u)),
-      );
-    } catch (error) {
-      console.error("Failed to update role:", error);
-      showToast(
-        error.response?.data?.message || "Failed to update role.",
-        "error",
-      );
-    } finally {
-      setPendingUserId(null);
-    }
-  };
-
-  const handleToggleBan = async (userId) => {
-    setPendingUserId(userId);
-
-    try {
-      const response = await api.patch(`/admin/users/${userId}/ban`);
-
-      setUsers((prev) =>
-        prev.map((u) =>
-          u._id === userId
-            ? { ...u, isBanned: response.data.user.isBanned }
-            : u,
-        ),
-      );
-      showToast(response.data.message, "success");
-    } catch (error) {
-      console.error("Failed to toggle ban:", error);
-      showToast(
-        error.response?.data?.message || "Failed to update ban status.",
-        "error",
-      );
-    } finally {
-      setPendingUserId(null);
-    }
-  };
-
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    setPendingUserId(deleteTarget._id);
-
-    try {
-      await api.delete(`/admin/users/${deleteTarget._id}`);
-
-      setUsers((prev) => prev.filter((u) => u._id !== deleteTarget._id));
-      showToast("User deleted successfully", "success");
-      setDeleteTarget(null);
-    } catch (error) {
-      console.error("Failed to delete user:", error);
-      showToast(
-        error.response?.data?.message || "Failed to delete user.",
-        "error",
-      );
-    } finally {
-      setPendingUserId(null);
-    }
+  const submitSearch = (event) => {
+    event.preventDefault();
+    setFilters((f) => ({ ...f, search: searchInput.trim() }));
   };
 
   return (
-    <>
-      <div className="px-8 py-10">
-        <p className="text-sm font-medium text-red-500">Admin Console</p>
-        <h1 className="mt-1 text-3xl font-bold">Users</h1>
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by username or email..."
-            className="w-full rounded-xl border border-gray-700 bg-gray-900 px-4 py-2.5 text-sm text-white outline-none placeholder:text-gray-600 focus:border-amber-500 sm:max-w-sm"
-          />
+    <div className="animate-fade-in-up">
+      <PageHeader title="Users" subtitle={`${list.total} account${list.total === 1 ? "" : "s"}`} icon={FaUsers} />
 
-          <select
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-            className="rounded-xl border border-gray-700 bg-gray-900 px-4 py-2.5 text-sm text-white outline-none focus:border-amber-500 sm:w-44"
-          >
-            <option value="">All Roles</option>
-            {ROLE_OPTIONS.map((role) => (
-              <option key={role} value={role} className="capitalize">
-                {role}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {loading ? (
-          <div className="mt-8 rounded-2xl border border-gray-800 bg-gray-900 p-8 text-center">
-            <p className="text-gray-400">Loading users...</p>
+      <div className="mb-5 grid gap-3 xl:grid-cols-[1fr_auto_auto_auto]">
+        <form onSubmit={submitSearch} className="flex gap-2">
+          <div className="flex-1">
+            <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Search username or email" aria-label="Search users" maxLength={50} />
           </div>
-        ) : error ? (
-          <div className="mt-8 rounded-2xl border border-red-900 bg-red-950/30 p-8 text-center">
-            <p className="text-red-400">{error}</p>
-          </div>
-        ) : (
-          <div className="mt-8 overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-gray-800 text-gray-400">
-                <tr>
-                  <th className="px-4 py-3">User</th>
-                  <th className="px-4 py-3">Role</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {users.map((u) => {
-                  const isSelf = u._id === currentUser?._id;
-                  const isPending = pendingUserId === u._id;
-
-                  return (
-                    <tr
-                      key={u._id}
-                      className="border-b border-gray-800 last:border-b-0"
-                    >
-                      <td className="px-4 py-4">
-                        <div className="font-semibold">{u.username}</div>
-                        <div className="text-xs text-gray-500">{u.email}</div>
-                      </td>
-
-                      <td className="px-4 py-4">
-                        <select
-                          value={u.role}
-                          disabled={isSelf || isPending}
-                          onChange={(e) =>
-                            handleRoleChange(u._id, e.target.value)
-                          }
-                          className="rounded-lg border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm capitalize disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {ROLE_OPTIONS.map((role) => (
-                            <option key={role} value={role}>
-                              {role}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-
-                      <td className="px-4 py-4">
-                        {u.isBanned ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-400">
-                            <FaBan className="text-xs" />
-                            Banned
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-400">
-                            <FaCheckCircle className="text-xs" />
-                            Active
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="px-4 py-4">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => handleToggleBan(u._id)}
-                            disabled={isSelf || isPending}
-                            className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-semibold transition hover:border-amber-500 hover:text-amber-500 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            {u.isBanned ? "Unban" : "Ban"}
-                          </button>
-
-                          <button
-                            onClick={() => setDeleteTarget(u)}
-                            disabled={isSelf || isPending}
-                            className="flex items-center gap-1.5 rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-semibold text-red-400 transition hover:border-red-500 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            <FaTrash className="text-xs" />
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {deleteTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-6">
-              <div className="flex justify-center mb-4">
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500/10 text-red-500">
-                  <FaUserShield className="text-2xl" />
-                </div>
-              </div>
-
-              <h3 className="text-center text-xl font-bold">
-                Delete this user?
-              </h3>
-
-              <p className="mt-2 text-center text-sm text-gray-400">
-                This will permanently delete{" "}
-                <span className="font-semibold text-white">
-                  {deleteTarget.username}
-                </span>
-                's account. This cannot be undone.
-              </p>
-
-              <div className="mt-6 flex gap-3">
-                <button
-                  onClick={() => setDeleteTarget(null)}
-                  className="flex-1 rounded-xl bg-gray-800 px-4 py-3 font-medium text-gray-200 transition hover:bg-gray-700"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  onClick={confirmDelete}
-                  className="flex-1 rounded-xl bg-red-500 px-4 py-3 font-medium text-white transition hover:bg-red-600"
-                >
-                  Yes, Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+          <Button type="submit" variant="secondary" icon={FaSearch} aria-label="Search" />
+        </form>
+        <Select aria-label="Role" options={ROLE_FILTERS} value={filters.role} onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))} />
+        <Select aria-label="Status" options={STATUS_FILTERS} value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} />
+        <Select aria-label="Sort" options={SORTS} value={filters.sort} onChange={(e) => setFilters((f) => ({ ...f, sort: e.target.value }))} />
       </div>
-    </>
+
+      {list.loading ? (
+        <SkeletonList count={8} />
+      ) : list.error ? (
+        <ErrorState message={list.error} onRetry={list.reload} />
+      ) : list.items.length === 0 ? (
+        <EmptyState icon={FaUsers} title="No users found" message="Try a different search or filter." />
+      ) : (
+        <ul className="space-y-2">
+          {list.items.map((u) => {
+            const isMe = u._id === me?._id;
+            const isAdminUser = u.roles.includes("admin");
+            const isArtistUser = u.roles.includes("artist");
+            return (
+              <li key={u._id} className="flex flex-col gap-3 rounded-xl border border-violet-500/10 bg-gray-900/60 p-4 sm:flex-row sm:items-center">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <Avatar src={u.avatar} name={u.username} />
+                  <div className="min-w-0">
+                    <p className="flex flex-wrap items-center gap-2 font-semibold text-white">
+                      <span className="truncate">{u.username}</span>
+                      {isMe && <Badge tone="gray">You</Badge>}
+                      {u.isBanned && <Badge tone="red">Banned</Badge>}
+                      {u.subscriptionStatus === "premium" && <Badge tone="yellow">Premium</Badge>}
+                    </p>
+                    <p className="truncate text-xs text-gray-400">{u.email} · joined {formatDate(u.createdAt)}</p>
+                    {u.isBanned && u.banReason && <p className="mt-1 text-xs text-red-300">Reason: {u.banReason}</p>}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {u.roles.map((r) => (
+                    <Badge key={r} tone={ROLE_TONE[r]}>{r}</Badge>
+                  ))}
+                  {!u.emailVerified && <Badge tone="gray">Unverified</Badge>}
+                </div>
+                {!isMe && (
+                  <div className="relative flex gap-2">
+                    {!isAdminUser && (
+                      <Button size="sm" variant={u.isBanned ? "secondary" : "danger"} icon={u.isBanned ? FaCheckCircle : FaBan} onClick={() => setAction({ type: u.isBanned ? "unban" : "ban", user: u })}>
+                        {u.isBanned ? "Unban" : "Ban"}
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost" icon={FaEllipsisV} aria-label={`More actions for ${u.username}`} aria-expanded={menuFor === u._id} onClick={() => setMenuFor(menuFor === u._id ? null : u._id)} />
+                    {menuFor === u._id && (
+                      <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-xl border border-violet-500/20 bg-gray-950 p-1 shadow-xl" role="menu" onMouseLeave={() => setMenuFor(null)}>
+                        {[
+                          isArtistUser ? { type: "revoke", label: "Revoke artist access" } : { type: "grant", label: "Grant artist access" },
+                          isAdminUser ? { type: "admin-revoke", label: "Remove admin role" } : { type: "admin-grant", label: "Make admin", icon: FaUserShield },
+                          !isAdminUser && { type: "delete", label: "Delete account", danger: true },
+                        ]
+                          .filter(Boolean)
+                          .map((item) => (
+                            <button
+                              key={item.type}
+                              role="menuitem"
+                              type="button"
+                              onClick={() => {
+                                setMenuFor(null);
+                                setAction({ type: item.type, user: u });
+                              }}
+                              className={`flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-3 text-left text-sm hover:bg-violet-500/10 ${item.danger ? "text-red-300" : "text-gray-200"}`}
+                            >
+                              {item.danger && <FaTrash aria-hidden="true" />} {item.label}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <LoadMore hasMore={list.hasMore} loading={list.loadingMore} onClick={list.loadMore} />
+
+      <ConfirmDialog
+        open={Boolean(action)}
+        title={dialogText?.title}
+        message={dialogText?.message}
+        confirmLabel={dialogText?.confirm}
+        tone={dialogText?.tone || "danger"}
+        loading={busy}
+        onConfirm={run}
+        onCancel={() => {
+          setAction(null);
+          setReason("");
+        }}
+      >
+        {dialogText?.withReason && (
+          <div className="mt-4">
+            <Textarea label="Reason (shown to the user)" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} rows={3} />
+          </div>
+        )}
+      </ConfirmDialog>
+    </div>
   );
 };
+
+export default AdminUsers;

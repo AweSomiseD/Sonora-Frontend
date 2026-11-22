@@ -1,294 +1,126 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  FaMusic,
-  FaCloudUploadAlt,
-  FaArrowLeft,
-  FaCheckCircle,
-} from "react-icons/fa";
-import { useToast } from "../context/ToastContext";
-import { validateFile } from "../utils/fileValidation.js";
+import { FaCloudUploadAlt, FaFileAudio, FaImage } from "react-icons/fa";
+import { Button, Card, Input, PageHeader, Select } from "../components/ui/index.jsx";
+import { GENRES, genreLabel } from "../constants/index.js";
+import { useToast } from "../context/ToastContext.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
+import api, { getErrorMessage } from "../services/api.js";
+import { FILE_TYPE_CONFIG, validateFile } from "../utils/fileValidation.js";
 
-import api from "../services/api.js";
+function FilePicker({ id, label, icon: Icon, accept, file, onChange, hint, error }) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-gray-300">
+        {label}
+      </label>
+      <label
+        htmlFor={id}
+        className={`flex min-h-24 cursor-pointer items-center gap-4 rounded-xl border-2 border-dashed px-4 py-4 transition hover:border-violet-400/60 ${error ? "border-red-500/50" : "border-violet-500/25"}`}
+      >
+        <Icon className="text-2xl text-violet-300" aria-hidden="true" />
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-semibold text-white">{file ? file.name : "Choose a file"}</span>
+          <span className="block text-xs text-gray-500">{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : hint}</span>
+        </span>
+      </label>
+      <input id={id} type="file" accept={accept} className="sr-only" onChange={(e) => onChange(e.target.files?.[0] || null)} />
+      {error && <p role="alert" className="mt-1 text-xs text-red-400">{error}</p>}
+    </div>
+  );
+}
 
 export const CreateMusic = () => {
-  const [coverImage, setCoverImage] = useState(null);
+  usePageTitle("Upload Music");
   const navigate = useNavigate();
   const { showToast } = useToast();
-
   const [title, setTitle] = useState("");
+  const [genre, setGenre] = useState("other");
+  const [isExplicit, setIsExplicit] = useState(false);
   const [musicFile, setMusicFile] = useState(null);
+  const [coverImage, setCoverImage] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [progress, setProgress] = useState(0);
+  const [uploading, setUploading] = useState(false);
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const pickAudio = (file) => {
+    const check = file ? validateFile(file, "audio") : { valid: true };
+    setErrors((e) => ({ ...e, music: check.valid ? undefined : check.message }));
+    setMusicFile(check.valid ? file : null);
+    if (file && check.valid && !title) setTitle(file.name.replace(/\.[^.]+$/, "").slice(0, 120));
+  };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const pickCover = (file) => {
+    const check = file ? validateFile(file, "image") : { valid: true };
+    setErrors((e) => ({ ...e, cover: check.valid ? undefined : check.message }));
+    setCoverImage(check.valid ? file : null);
+    if (preview) URL.revokeObjectURL(preview);
+    setPreview(check.valid && file ? URL.createObjectURL(file) : null);
+  };
 
-    setError("");
-    setSuccess("");
+  const submit = async (event) => {
+    event.preventDefault();
+    const nextErrors = {};
+    if (!title.trim()) nextErrors.title = "Title is required";
+    if (!musicFile) nextErrors.music = "Please choose an audio file";
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
 
-    // Title validation
-    if (!title.trim()) {
-      setError("Music title is required.");
-      return;
-    }
+    const form = new FormData();
+    form.append("title", title.trim());
+    form.append("genre", genre);
+    form.append("isExplicit", String(isExplicit));
+    form.append("music", musicFile);
+    if (coverImage) form.append("coverImage", coverImage);
 
-    // File validation (defense-in-depth — re-checked even though
-    // onChange already validated at selection time)
-    const validation = validateFile(musicFile, "audio");
-
-    if (!validation.valid) {
-      showToast(validation.message, "error");
-      return;
-    }
-
+    setUploading(true);
+    setProgress(0);
     try {
-      setLoading(true);
-
-      const formData = new FormData();
-
-      formData.append("title", title.trim());
-      formData.append("music", musicFile);
-      if (coverImage) {
-        formData.append("coverImage", coverImage);
-      }
-
-      console.log("Uploading music:", {
-        title,
-        file: musicFile.name,
+      await api.post("/music/upload", form, {
+        onUploadProgress: (e) => e.total && setProgress(Math.round((e.loaded / e.total) * 100)),
       });
-
-      const response = await api.post("/music/upload", formData);
-
-      console.log("Music Upload Response:", response.data);
-
-      setSuccess(response.data?.message || "Music uploaded successfully!");
-
-      // Clear form
-      setTitle("");
-      setMusicFile(null);
-      setCoverImage(null);
-      // reset file input values to allow re-uploading the same file if needed
-      document.getElementById("music-file").value = "";
-      if (document.getElementById("cover-image")) {
-        document.getElementById("cover-image").value = "";
-      }
-    } catch (error) {
-      console.error("Music upload failed:", error);
-
-      if (error.response?.status === 401) {
-        setError("You are not authenticated. Please login again.");
-      } else if (error.response?.status === 403) {
-        setError("Only artists can upload music.");
-      } else {
-        setError(error.response?.data?.message || "Failed to upload music.");
-      }
+      showToast("Song uploaded! Your followers have been notified.", "success");
+      navigate("/artist/my-music");
+    } catch (err) {
+      if (err.response?.data?.code !== "PLAN_LIMIT") showToast(getErrorMessage(err, "Upload failed"), "error");
     } finally {
-      setLoading(false);
+      setUploading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <main className="mx-auto max-w-3xl px-4 py-10 sm:px-6 lg:px-8">
-        {/* Back */}
-
-        <button
-          onClick={() => navigate(-1)}
-          className="mb-8 flex items-center gap-2 text-sm text-gray-400 transition hover:text-white"
-        >
-          <FaArrowLeft />
-          Back
-        </button>
-
-        {/* Header */}
-
-        <div className="mb-8">
-          <p className="text-sm font-semibold uppercase tracking-widest text-amber-500">
-            Artist Studio
-          </p>
-
-          <h1 className="mt-2 text-4xl font-black sm:text-5xl">Upload Music</h1>
-
-          <p className="mt-3 text-gray-400">
-            Upload your track and share it with listeners.
-          </p>
-        </div>
-
-        {/* Form Card */}
-
-        <div className="rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl sm:p-8">
-          {/* Success */}
-
-          {success && (
-            <div className="mb-6 flex items-start gap-3 rounded-xl border border-green-800 bg-green-950/30 p-4 text-green-400">
-              <FaCheckCircle className="mt-0.5 shrink-0" />
-
-              <p>{success}</p>
+    <div className="animate-fade-in-up mx-auto max-w-2xl">
+      <PageHeader title="Upload Music" subtitle={`MP3, WAV or M4A up to ${FILE_TYPE_CONFIG.audio.maxSizeBytes / 1024 / 1024} MB`} icon={FaCloudUploadAlt} />
+      <Card>
+        <form onSubmit={submit} className="space-y-5" noValidate>
+          <FilePicker id="music-file" label="Audio file *" icon={FaFileAudio} accept={FILE_TYPE_CONFIG.audio.accept} file={musicFile} onChange={pickAudio} hint={FILE_TYPE_CONFIG.audio.formatsLabel} error={errors.music} />
+          <Input label="Title" value={title} maxLength={120} showCounter onChange={(e) => setTitle(e.target.value)} error={errors.title} required />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Select label="Genre" value={genre} onChange={(e) => setGenre(e.target.value)} options={GENRES.map((g) => ({ value: g, label: genreLabel(g) }))} />
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 self-end text-sm text-gray-300">
+              <input type="checkbox" checked={isExplicit} onChange={(e) => setIsExplicit(e.target.checked)} className="h-4 w-4 accent-violet-500" /> Explicit content
+            </label>
+          </div>
+          <div className="grid items-start gap-4 sm:grid-cols-[1fr_auto]">
+            <FilePicker id="cover-file" label="Cover image (optional)" icon={FaImage} accept={FILE_TYPE_CONFIG.image.accept} file={coverImage} onChange={pickCover} hint="JPG, PNG, WEBP up to 5 MB" error={errors.cover} />
+            {preview && <img src={preview} alt="Cover preview" className="h-24 w-24 rounded-xl object-cover sm:mt-7" />}
+          </div>
+          {uploading && (
+            <div aria-live="polite">
+              <div className="h-2 overflow-hidden rounded-full bg-gray-800">
+                <div className="h-full bg-linear-to-r from-violet-500 to-fuchsia-500 transition-all" style={{ width: `${progress}%` }} />
+              </div>
+              <p className="mt-1 text-xs text-gray-400">{progress < 100 ? `Uploading... ${progress}%` : "Processing on the server..."}</p>
             </div>
           )}
-
-          {/* Error */}
-
-          {error && (
-            <div className="mb-6 rounded-xl border border-red-800 bg-red-950/30 p-4 text-red-400">
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Title */}
-
-            <div>
-              <label
-                htmlFor="title"
-                className="mb-2 block text-sm font-semibold text-gray-300"
-              >
-                Music Title
-              </label>
-
-              <div className="relative">
-                <FaMusic className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
-
-                <input
-                  id="title"
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Enter song title"
-                  disabled={loading}
-                  className="w-full rounded-xl border border-gray-700 bg-gray-950 py-3.5 pl-11 pr-4 text-white outline-none transition placeholder:text-gray-600 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="cover-image"
-                  className="mb-2 block text-sm font-semibold text-gray-300"
-                >
-                  Cover Image <span className="text-gray-600">(optional)</span>
-                </label>
-
-                <input
-                  id="cover-image"
-                  type="file"
-                  accept="image/*"
-                  disabled={loading}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-
-                    const validation = validateFile(file, "image");
-                    if (!validation.valid) {
-                      showToast(validation.message, "error");
-                      e.target.value = "";
-                      setCoverImage(null);
-                      return;
-                    }
-
-                    setCoverImage(file);
-                  }}
-                  className="w-full rounded-xl border border-gray-700 bg-gray-950 px-4 py-3 text-sm text-gray-300 outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-amber-500 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-gray-950 hover:file:bg-amber-400"
-                />
-              </div>
-            </div>
-
-            {/* Music File */}
-
-            <div>
-              <label
-                htmlFor="music-file"
-                className="mb-2 block text-sm font-semibold text-gray-300"
-              >
-                Music File
-              </label>
-
-              <label
-                htmlFor="music-file"
-                className="group flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gray-700 bg-gray-950/50 px-6 py-12 text-center transition hover:border-amber-500/60 hover:bg-amber-500/5"
-              >
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10 text-amber-500 transition group-hover:scale-110">
-                  <FaCloudUploadAlt className="text-3xl" />
-                </div>
-
-                {musicFile ? (
-                  <>
-                    <p className="font-semibold text-white">{musicFile.name}</p>
-
-                    <p className="mt-2 text-sm text-gray-500">
-                      {(musicFile.size / (1024 * 1024)).toFixed(2)} MB
-                    </p>
-
-                    <p className="mt-3 text-sm text-amber-500">
-                      Click to choose another file
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p className="font-semibold text-white">
-                      Choose your music file
-                    </p>
-
-                    <p className="mt-2 text-sm text-gray-500">
-                      Click here to browse your computer
-                    </p>
-
-                    <p className="mt-3 text-xs text-gray-600">
-                      MP3, WAV, or M4A — up to 5 MB
-                    </p>
-                  </>
-                )}
-
-                <input
-                  id="music-file"
-                  type="file"
-                  accept="audio/*"
-                  className="hidden"
-                  disabled={loading}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-
-                    if (!file) return;
-
-                    const validation = validateFile(file, "audio");
-
-                    if (!validation.valid) {
-                      showToast(validation.message, "error");
-                      e.target.value = ""; // Reset the file input
-                      setMusicFile(null);
-                      return;
-                    }
-
-                    setMusicFile(file);
-                    setError(""); // Clear any previous error
-                  }}
-                />
-              </label>
-            </div>
-
-            {/* Submit */}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex w-full items-center justify-center gap-3 rounded-xl bg-amber-500 px-6 py-4 font-bold text-gray-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? (
-                <>
-                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-gray-950 border-t-transparent" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <FaCloudUploadAlt />
-                  Upload Music
-                </>
-              )}
-            </button>
-          </form>
-        </div>
-      </main>
+          <Button type="submit" size="lg" className="w-full" loading={uploading} icon={FaCloudUploadAlt}>
+            Upload song
+          </Button>
+        </form>
+      </Card>
     </div>
   );
 };
+
+export default CreateMusic;

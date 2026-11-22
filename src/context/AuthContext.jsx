@@ -1,148 +1,208 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useNavigate } from "react-router-dom";
 import socket from "../socket.js";
-import api from "../services/api.js";
+import api, { getErrorCode, getErrorMessage } from "../services/api.js";
+import { getDashboardPath } from "../routes/routePaths.js";
+import { useToast } from "./ToastContext.jsx";
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
+
+const MODE_NAMES = {
+  artist: "Artist Studio",
+  listener: "Listener Hub",
+  admin: "Admin Console",
+};
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [banned, setBanned] = useState(null); // { reason } when the account is banned
+  const [switching, setSwitching] = useState(false);
+  const navigate = useNavigate();
+  const { showToast } = useToast();
+  const switchingRef = useRef(false);
+  const lastRevokeRef = useRef(0);
 
+  // ===== Current user =====
+  const fetchCurrentUser = useCallback(async (silent = false) => {
+    try {
+      if (!silent) setLoading(true);
+      const response = await api.get("/auth/me");
+      setUser(response.data.user);
+      return response.data.user;
+    } catch (error) {
+      if (!silent || error.response?.status === 401) setUser(null);
+      return null;
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, []);
+
+  const refreshUser = useCallback(
+    () => fetchCurrentUser(true),
+    [fetchCurrentUser],
+  );
+
+  const updateUser = useCallback((updates) => {
+    setUser((current) => (current ? { ...current, ...updates } : current));
+  }, []);
+
+  // ===== Login / register =====
   const login = async (email, password) => {
     try {
-      const response = await api.post("/auth/login", {
-        email,
-        password,
-      });
-
-      // Login ke baad current user fetch karo
-      await fetchCurrentUser();
-
-      return {
-        success: true,
-        data: response.data,
-      };
+      const response = await api.post("/auth/login", { email, password });
+      setBanned(null);
+      setUser(response.data.user);
+      return { success: true, data: response.data };
     } catch (error) {
-      console.error("Login error:", error);
-
       return {
         success: false,
-        message: error.response?.data?.message || "Login failed",
+        code: getErrorCode(error),
+        message: getErrorMessage(error, "Login failed"),
+        data: error.response?.data,
       };
     }
   };
 
-  // ========================================
-  // Register
-  // ========================================
-
-  const register = async (username, email, password, role) => {
+  const register = async (
+    username,
+    email,
+    password,
+    wantsToBeArtist = false,
+  ) => {
     try {
       const response = await api.post("/auth/register", {
         username,
         email,
         password,
-        role,
+        wantsToBeArtist,
       });
-
-      return {
-        success: true,
-        data: response.data,
-      };
+      return { success: true, data: response.data };
     } catch (error) {
-      console.error("Register error:", error);
-
       return {
         success: false,
-        message: error.response?.data?.message || "Registration failed",
+        code: getErrorCode(error),
+        message: getErrorMessage(error, "Registration failed"),
+        errors: error.response?.data?.errors || [],
       };
     }
   };
 
-  // ========================================
-  // Get Current User
-  // ========================================
+  // ===== Roles =====
+  const roles = useMemo(
+    () => user?.roles || (user?.role ? [user.role] : []),
+    [user],
+  );
+  const activeRole = user?.activeRole || user?.role || null;
+  const canSwitch = roles.includes("listener") && roles.includes("artist");
 
-  const fetchCurrentUser = async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      const response = await api.get("/auth/me");
-      setUser(response.data.user);
-    } catch (error) {
-      console.log("Authentication check failed:", error);
-      if (!silent) setUser(null);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+  const switchRole = useCallback(
+    async (role, { silent = false, navigateTo } = {}) => {
+      if (switchingRef.current) return false;
+      switchingRef.current = true;
+      setSwitching(true);
+      try {
+        const response = await api.post("/auth/switch-role", { role });
+        setUser(response.data.user);
+        // New access token: reconnect the socket with the new active role
+        window.dispatchEvent(new Event("auth:token-refreshed"));
+        navigate(navigateTo || getDashboardPath(role));
+        if (!silent)
+          showToast(`Switched to ${MODE_NAMES[role] || role}`, "success");
+        return true;
+      } catch (error) {
+        showToast(getErrorMessage(error, "Could not switch mode"), "error");
+        return false;
+      } finally {
+        switchingRef.current = false;
+        setSwitching(false);
+      }
+    },
+    [navigate, showToast],
+  );
 
-  const updateUser = (updates) => {
-    setUser((current) => (current ? { ...current, ...updates } : current));
-  };
+  // The API and the socket can both report a revoke: handle it once
+  const handleArtistRevoked = useCallback(() => {
+    if (Date.now() - lastRevokeRef.current < 5000) return;
+    lastRevokeRef.current = Date.now();
+    showToast(
+      "Your artist access was removed. You are now in listener mode.",
+      "warning",
+    );
+    switchRole("listener", { silent: true });
+  }, [showToast, switchRole]);
 
-  // ========================================
-  // Role
-  // ========================================
+  // ===== Load on start ===== bad main change kar dena
+  // useEffect(() => {
+  //   fetchCurrentUser();
+  // }, [fetchCurrentUser]);
 
-  const role = user?.role || null;
-
-  const isAuthenticated = !!user;
-
-  const isArtist = user?.role === "artist";
-
-  const isListener = user?.role === "listener";
-
-  const isAdmin = user?.role === "admin";
-
-  // ========================================
-  // Check Authentication on App Load
-  // ========================================
-
+  // ==== Global auth events from the API interceptor =====
   useEffect(() => {
-    fetchCurrentUser();
-  }, []);
+    if (import.meta.env.VITE_PUBLIC_LANDING_ONLY === "true") {
+      setLoading(false);
+      return;
+    }
 
-  // ========================================
-  // Socket Connection (user ke login/logout state se juda hua)
-  // ========================================
+    fetchCurrentUser();
+  }, [fetchCurrentUser]);
+
+  // ===== Global auth events from the API interceptor =====
+  useEffect(() => {
+    const onBanned = (event) => {
+      setBanned({ reason: event.detail?.reason || null });
+      socket.disconnect();
+    };
+    const onRoleRevoked = () => handleArtistRevoked();
+    const onRefreshed = () => refreshUser();
+
+    window.addEventListener("auth:banned", onBanned);
+    window.addEventListener("auth:role-revoked", onRoleRevoked);
+    window.addEventListener("auth:token-refreshed", onRefreshed);
+    return () => {
+      window.removeEventListener("auth:banned", onBanned);
+      window.removeEventListener("auth:role-revoked", onRoleRevoked);
+      window.removeEventListener("auth:token-refreshed", onRefreshed);
+    };
+  }, [refreshUser, handleArtistRevoked]);
+
+  // ===== Socket connection follows the login state =====
+  const isAuthenticated = Boolean(user);
 
   useEffect(() => {
     if (!isAuthenticated) {
       socket.disconnect();
-      return;
+      return undefined;
     }
 
-    const handleSocketReady = () => {
-      console.log("Socket is ready:", socket.id);
-    };
-
-    let isRefreshingSocketAuth = false;
+    let refreshingSocketAuth = false;
     const handleSocketError = (error) => {
-      console.error("Socket connection error:", error.message);
-
+      if (/account banned/i.test(error.message)) {
+        setBanned({ reason: null });
+        return;
+      }
       if (
-        isRefreshingSocketAuth ||
+        refreshingSocketAuth ||
         !/authentication required|invalid or expired access token/i.test(
           error.message,
         )
-      ) {
+      )
         return;
-      }
-
-      isRefreshingSocketAuth = true;
+      refreshingSocketAuth = true;
       api
         .post("/auth/refresh")
-        .then(() => {
-          window.dispatchEvent(new Event("auth:token-refreshed"));
-        })
-        .catch((refreshError) => {
-          console.error(
-            "Unable to refresh authentication after socket rejection:",
-            refreshError,
-          );
-        })
+        .then(() => window.dispatchEvent(new Event("auth:token-refreshed")))
+        .catch(() => {})
         .finally(() => {
-          isRefreshingSocketAuth = false;
+          refreshingSocketAuth = false;
         });
     };
 
@@ -151,69 +211,103 @@ export const AuthProvider = ({ children }) => {
       socket.connect();
     };
 
-    socket.on("socket:ready", handleSocketReady);
+    // Live role changes pushed by the server (approve / revoke / admin change)
+    const onRoleUpdated = (payload) => {
+      refreshUser();
+      if (
+        payload?.reason === "artist_approved" ||
+        payload?.reason === "artist_restored"
+      ) {
+        showToast(
+          "You are now an artist! Use the switch button to open Artist Studio.",
+          "success",
+          {
+            action: { label: "Switch", onClick: () => switchRole("artist") },
+          },
+        );
+      }
+    };
+    const onRoleRevoked = () => handleArtistRevoked();
+    const onSessionChanged = () => {
+      showToast("Your account was updated. Please log in again.", "info");
+      setTimeout(() => window.location.replace("/login"), 1500);
+    };
+
     socket.on("connect_error", handleSocketError);
+    socket.on("role:updated", onRoleUpdated);
+    socket.on("role:revoked", onRoleRevoked);
+    socket.on("session:changed", onSessionChanged);
     window.addEventListener("auth:token-refreshed", handleTokenRefresh);
     socket.connect();
 
     return () => {
-      socket.off("socket:ready", handleSocketReady);
       socket.off("connect_error", handleSocketError);
+      socket.off("role:updated", onRoleUpdated);
+      socket.off("role:revoked", onRoleRevoked);
+      socket.off("session:changed", onSessionChanged);
       window.removeEventListener("auth:token-refreshed", handleTokenRefresh);
       socket.disconnect();
     };
-  }, [isAuthenticated]);
+  }, [
+    isAuthenticated,
+    refreshUser,
+    showToast,
+    switchRole,
+    handleArtistRevoked,
+  ]);
 
-  // ========================================
-  // Logout
-  // ========================================
-
+  // ===== Logout =====
   const logout = async () => {
     try {
-      // Logout should never trigger the expired-token refresh flow.
       await api.post("/auth/logout", null, { skipAuthRefresh: true });
-    } catch (error) {
-      console.error("Logout error:", error);
+    } catch {
+      // ignore network errors on logout
     } finally {
       socket.disconnect();
-      // Reload the public route so protected-route guards cannot redirect
-      // during the state transition from authenticated to logged out.
+      // Full reload: clears every in-memory state (player, caches)
       window.location.replace("/");
     }
   };
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        role,
-        loading,
-        isAuthenticated,
-        isArtist,
-        isListener,
-        isAdmin,
-        login,
-        register,
-        logout,
-        fetchCurrentUser,
-        updateUser,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
-};
+  const logoutAll = async () => {
+    try {
+      await api.post("/auth/logout-all", null, { skipAuthRefresh: true });
+    } finally {
+      socket.disconnect();
+      window.location.replace("/login");
+    }
+  };
 
-// ========================================
-// Custom Hook
-// ========================================
+  const value = {
+    user,
+    role: activeRole,
+    activeRole,
+    roles,
+    canSwitch,
+    switching,
+    loading,
+    banned,
+    isAuthenticated,
+    isArtist: activeRole === "artist",
+    isListener: activeRole === "listener",
+    isAdmin: activeRole === "admin",
+    hasArtistRole: roles.includes("artist"),
+    artistRequest: user?.artistRequest || null,
+    login,
+    register,
+    logout,
+    logoutAll,
+    switchRole,
+    fetchCurrentUser,
+    refreshUser,
+    updateUser,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-
-  if (!context) {
-    throw new Error("useAuth must be used inside AuthProvider");
-  }
-
+  if (!context) throw new Error("useAuth must be used inside AuthProvider");
   return context;
 };

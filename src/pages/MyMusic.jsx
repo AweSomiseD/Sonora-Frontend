@@ -1,240 +1,191 @@
 import { useEffect, useState } from "react";
-import {
-  FaMusic,
-  FaPlay,
-  FaTrash,
-  FaEdit,
-  FaCheck,
-  FaTimes,
-  FaHeadphones,
-} from "react-icons/fa";
+import { Link } from "react-router-dom";
+import { FaChartLine, FaCloudUploadAlt, FaEdit, FaEyeSlash, FaMusic, FaPlay, FaTrash } from "react-icons/fa";
+import { TrackRow } from "../components/MusicCard.jsx";
+import { Badge, Button, ConfirmDialog, EmptyState, ErrorState, Input, Modal, PageHeader, Select, SkeletonList } from "../components/ui/index.jsx";
+import { GENRES, PLAN_LIMITS, genreLabel } from "../constants/index.js";
+import { useAuth } from "../context/AuthContext.jsx";
+import { usePlayer } from "../context/PlayerContext.jsx";
+import { useToast } from "../context/ToastContext.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
+import api, { getErrorMessage } from "../services/api.js";
+import { formatCount } from "../utils/format.js";
+import { FILE_TYPE_CONFIG, validateFile } from "../utils/fileValidation.js";
 
-import api from "../services/api.js";
-import { MusicPlayer } from "../components/MusicPlayer";
-import { useToast } from "../context/ToastContext";
-
-export const MyMusic = () => {
+function EditMusicModal({ music, onClose, onSaved }) {
   const { showToast } = useToast();
-  const [musics, setMusics] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [title, setTitle] = useState(music.title);
+  const [genre, setGenre] = useState(music.genre || "other");
+  const [isExplicit, setIsExplicit] = useState(Boolean(music.isExplicit));
+  const [cover, setCover] = useState(null);
   const [error, setError] = useState("");
-  const [currentMusic, setCurrentMusic] = useState(null);
-  const [deletingId, setDeletingId] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  const [editingId, setEditingId] = useState(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [savingId, setSavingId] = useState(null);
-
-  useEffect(() => {
-    const fetchMusic = async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const response = await api.get("/music/my-music");
-
-        setMusics(response.data.musics || []);
-      } catch (error) {
-        console.error("Failed to fetch artist music:", error);
-        setError("Unable to load your music.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchMusic();
-  }, []);
-
-  const handleDelete = async (musicId) => {
-    setDeletingId(musicId);
-
-    try {
-      await api.delete(`/music/${musicId}`);
-      setMusics((prev) => prev.filter((m) => m._id !== musicId));
-      showToast("Music deleted successfully", "success");
-    } catch (error) {
-      console.error("Failed to delete music:", error);
-      showToast(
-        error.response?.data?.message || "Failed to delete music.",
-        "error",
-      );
-    } finally {
-      setDeletingId(null);
+  const save = async () => {
+    if (!title.trim()) return setError("Title is required");
+    if (cover) {
+      const check = validateFile(cover, "image");
+      if (!check.valid) return setError(check.message);
     }
-  };
-
-  const startEdit = (music) => {
-    setEditingId(music._id);
-    setEditTitle(music.title);
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditTitle("");
-  };
-
-  const saveEdit = async (musicId) => {
-    if (!editTitle.trim()) {
-      showToast("Title cannot be empty", "error");
-      return;
-    }
-
-    setSavingId(musicId);
-
+    setSaving(true);
+    setError("");
     try {
-      const response = await api.patch(`/music/${musicId}`, {
-        title: editTitle.trim(),
-      });
-      setMusics((prev) =>
-        prev.map((m) => (m._id === musicId ? response.data.music : m)),
-      );
-      showToast("Music updated successfully", "success");
-      setEditingId(null);
-    } catch (error) {
-      console.error("Failed to update music:", error);
-      showToast(
-        error.response?.data?.message || "Failed to update music.",
-        "error",
-      );
+      const form = new FormData();
+      form.append("title", title.trim());
+      form.append("genre", genre);
+      form.append("isExplicit", String(isExplicit));
+      if (cover) form.append("coverImage", cover);
+      const { data } = await api.patch(`/music/${music._id}`, form);
+      onSaved(data.music);
+      showToast("Song updated", "success");
+      onClose();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not save"));
     } finally {
-      setSavingId(null);
+      setSaving(false);
     }
   };
 
   return (
-    <div className="px-8 py-10">
-      <p className="text-sm font-medium text-amber-500">Your Collection</p>
-      <h1 className="mt-1 text-3xl font-bold">My Music</h1>
+    <Modal
+      open
+      onClose={onClose}
+      title="Edit song"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={save} loading={saving}>
+            Save changes
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Input label="Title" value={title} maxLength={120} showCounter onChange={(e) => setTitle(e.target.value)} required />
+        <Select label="Genre" value={genre} onChange={(e) => setGenre(e.target.value)} options={GENRES.map((g) => ({ value: g, label: genreLabel(g) }))} />
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-300">
+          <input type="checkbox" checked={isExplicit} onChange={(e) => setIsExplicit(e.target.checked)} className="h-4 w-4 accent-violet-500" /> Explicit content
+        </label>
+        <div>
+          <label htmlFor="edit-cover" className="text-sm font-medium text-gray-300">
+            New cover (optional)
+          </label>
+          <input id="edit-cover" type="file" accept={FILE_TYPE_CONFIG.image.accept} onChange={(e) => setCover(e.target.files?.[0] || null)} className="mt-1 block w-full text-sm text-gray-400 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-violet-500/20 file:px-3 file:py-2 file:text-violet-100" />
+        </div>
+        {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+      </div>
+    </Modal>
+  );
+}
 
-      {loading ? (
-        <div className="mt-8 rounded-2xl border border-gray-800 bg-gray-900 p-8 text-center">
-          <p className="text-gray-400">Loading your music...</p>
-        </div>
-      ) : error ? (
-        <div className="mt-8 rounded-2xl border border-red-900 bg-red-950/30 p-8 text-center">
-          <p className="text-red-400">{error}</p>
-        </div>
-      ) : musics.length === 0 ? (
-        <div className="mt-8 rounded-2xl border border-dashed border-gray-700 bg-gray-900 p-10 text-center">
-          <FaMusic className="mx-auto text-4xl text-gray-700" />
-          <h3 className="mt-4 text-xl font-bold">No music uploaded yet</h3>
-          <p className="mt-2 text-gray-400">
-            Upload your first song to see it here.
-          </p>
-        </div>
+export const MyMusic = () => {
+  usePageTitle("My Music");
+  const { user } = useAuth();
+  const { playQueue } = usePlayer();
+  const { showToast } = useToast();
+  const [items, setItems] = useState(null);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    setError("");
+    api
+      .get("/music/my-music")
+      .then(({ data }) => setItems(data.items))
+      .catch((err) => setError(getErrorMessage(err)));
+  };
+  useEffect(load, []);
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await api.delete(`/music/${deleting._id}`);
+      setItems((prev) => prev.filter((m) => m._id !== deleting._id));
+      showToast("Song deleted", "success");
+      setDeleting(null);
+    } catch (err) {
+      showToast(getErrorMessage(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const isPremium = user?.subscriptionStatus === "premium";
+  const published = items?.filter((m) => m.status !== "hidden") || [];
+  const limit = PLAN_LIMITS.artist.free.maxPublishedTracks;
+
+  return (
+    <div className="animate-fade-in-up">
+      <PageHeader
+        title="My Music"
+        subtitle={items ? `${items.length} song${items.length === 1 ? "" : "s"}${isPremium ? "" : ` · ${published.length}/${limit} on the free plan`}` : "Loading..."}
+        icon={FaMusic}
+        actions={
+          <>
+            {published.length > 0 && <Button variant="secondary" icon={FaPlay} onClick={() => playQueue(published, 0)}>Play all</Button>}
+            <Link to="/artist/upload-music" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-linear-to-r from-violet-600 to-fuchsia-600 px-4 text-sm font-semibold text-white">
+              <FaCloudUploadAlt aria-hidden="true" /> Upload
+            </Link>
+          </>
+        }
+      />
+      {error ? (
+        <ErrorState message={error} onRetry={load} />
+      ) : !items ? (
+        <SkeletonList count={6} />
+      ) : items.length === 0 ? (
+        <EmptyState icon={FaMusic} title="No songs yet" message="Upload your first song and share it with listeners." action={<Link to="/artist/upload-music" className="font-semibold text-violet-300 hover:underline">Upload music</Link>} />
       ) : (
-        <div className="mt-8 overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
-          {musics.map((music, index) => (
-            <div
+        <ol className="space-y-1">
+          {items.map((music) => (
+            <TrackRow
               key={music._id}
-              className="flex items-center gap-4 border-b border-gray-800 p-4 last:border-b-0 hover:bg-gray-800/70"
-            >
-              <span className="w-6 text-center text-sm text-gray-500">
-                {index + 1}
-              </span>
-
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-amber-500/10 text-amber-500">
-                {music.coverImage ? (
-                  <img
-                    src={music.coverImage}
-                    alt={music.title}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <FaMusic />
-                )}
-              </div>
-
-              <div className="min-w-0 flex-1">
-                {editingId === music._id ? (
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") saveEdit(music._id);
-                      if (e.key === "Escape") cancelEdit();
-                    }}
-                    className="w-full rounded-lg border border-amber-500 bg-gray-950 px-3 py-1.5 text-sm outline-none"
-                  />
-                ) : (
-                  <h3 className="truncate font-semibold">{music.title}</h3>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                {editingId === music._id ? (
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") saveEdit(music._id);
-                      if (e.key === "Escape") cancelEdit();
-                    }}
-                    className="w-full rounded-lg border border-amber-500 bg-gray-950 px-3 py-1.5 text-sm outline-none"
-                  />
-                ) : (
-                  <>
-                    <h3 className="truncate font-semibold">{music.title}</h3>
-                    <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
-                      <FaHeadphones className="text-[10px]" />
-                      {music.playCount ?? 0}{" "}
-                      {music.playCount === 1 ? "play" : "plays"}
-                    </p>
-                  </>
-                )}
-              </div>
-              {editingId === music._id ? (
+              music={music}
+              list={published}
+              index={Math.max(0, published.findIndex((m) => m._id === music._id))}
+              extra={
                 <>
-                  <button
-                    onClick={() => saveEdit(music._id)}
-                    disabled={savingId === music._id}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-green-500 transition hover:bg-green-500/10 disabled:opacity-50"
-                  >
-                    <FaCheck className="text-sm" />
+                  {formatCount(music.playCount)} plays · {genreLabel(music.genre)}
+                  {music.status === "hidden" && (
+                    <Badge tone="red" className="ml-2">
+                      <FaEyeSlash aria-hidden="true" /> Hidden{music.hiddenReason === "moderation" ? " by moderator" : ""}
+                    </Badge>
+                  )}
+                </>
+              }
+              actions={
+                <>
+                  <Link to="/artist/analytics" className="hidden h-10 w-10 items-center justify-center rounded-full text-gray-500 hover:text-violet-200 sm:flex" aria-label={`Analytics for ${music.title}`}>
+                    <FaChartLine aria-hidden="true" />
+                  </Link>
+                  <button type="button" onClick={() => setEditing(music)} className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:text-violet-200" aria-label={`Edit ${music.title}`}>
+                    <FaEdit aria-hidden="true" />
                   </button>
-                  <button
-                    onClick={cancelEdit}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-800"
-                  >
-                    <FaTimes className="text-sm" />
+                  <button type="button" onClick={() => setDeleting(music)} className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full text-gray-500 hover:text-red-300" aria-label={`Delete ${music.title}`}>
+                    <FaTrash aria-hidden="true" />
                   </button>
                 </>
-              ) : (
-                <button
-                  onClick={() => startEdit(music)}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 transition hover:bg-amber-500/10 hover:text-amber-500"
-                >
-                  <FaEdit className="text-sm" />
-                </button>
-              )}
-
-              <button
-                onClick={() => setCurrentMusic(music)}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500 text-gray-950 transition hover:bg-amber-400"
-              >
-                <FaPlay className="ml-0.5 text-sm" />
-              </button>
-              <button
-                onClick={() => handleDelete(music._id)}
-                disabled={deletingId === music._id}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 transition hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
-              >
-                <FaTrash className="text-sm" />
-              </button>
-            </div>
+              }
+            />
           ))}
-        </div>
+        </ol>
       )}
-
-      {currentMusic && (
-        <MusicPlayer
-          music={currentMusic}
-          onClose={() => setCurrentMusic(null)}
-        />
-      )}
+      {editing && <EditMusicModal music={editing} onClose={() => setEditing(null)} onSaved={(updated) => setItems((prev) => prev.map((m) => (m._id === updated._id ? updated : m)))} />}
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        title="Delete this song?"
+        message={`"${deleting?.title}" will be removed from albums, playlists and likes. This cannot be undone.`}
+        confirmLabel="Delete"
+        loading={busy}
+        onConfirm={remove}
+        onCancel={() => setDeleting(null)}
+      />
     </div>
   );
 };
+
+export default MyMusic;

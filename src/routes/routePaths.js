@@ -4,5 +4,4 @@ export const getDashboardPath = (role) => {
   return "/listener";
 };
 
-export const getDashboardChildPath = (role, childPath) =>
-  `${getDashboardPath(role)}/${childPath}`;
+export const getDashboardChildPath = (role, childPath) => `${getDashboardPath(role)}/${childPath}`;

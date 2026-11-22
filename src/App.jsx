@@ -1,34 +1,43 @@
 import { useLocation } from "react-router-dom";
-import { AppRoutes } from "./routes/AppRoutes";
 import { Navbar } from "./components/Navbar";
+import StatusScreen from "./components/StatusScreen.jsx";
+import UpgradeModal from "./components/UpgradeModal.jsx";
 import { useAuth } from "./context/AuthContext";
+import { AppRoutes } from "./routes/AppRoutes";
+
+const DASHBOARD_PREFIXES = [
+  "/artist",
+  "/listener",
+  "/admin",
+  "/payment",
+  "/playlists",
+];
 
 function App() {
-  const { loading } = useAuth();
+  const { loading, banned, logout } = useAuth();
   const location = useLocation();
 
-  const isDashboardRoute =
-    location.pathname === "/artist" ||
-    location.pathname.startsWith("/artist/") ||
-    location.pathname === "/listener" ||
-    location.pathname.startsWith("/listener/") ||
-    location.pathname === "/admin" ||
-    location.pathname.startsWith("/admin/") ||
-    location.pathname === "/payment/success" ||
-    location.pathname === "/payment/cancel";
+  const isDashboardRoute = DASHBOARD_PREFIXES.some(
+    (prefix) =>
+      location.pathname === prefix ||
+      location.pathname.startsWith(`${prefix}/`),
+  );
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
-        Loading...
-      </div>
-    );
+  // Public routes (like landing page) should not wait for auth context to load, so we only show the loading screen for dashboard routes.
+  // if (loading) return <StatusScreen variant="loading" />;
+  if (loading && isDashboardRoute) {
+    return <StatusScreen variant="loading" />;
   }
+  if (banned)
+    return (
+      <StatusScreen variant="banned" reason={banned.reason} onLogout={logout} />
+    );
 
   return (
     <>
       {!isDashboardRoute && <Navbar />}
       <AppRoutes />
+      <UpgradeModal />
     </>
   );
 }

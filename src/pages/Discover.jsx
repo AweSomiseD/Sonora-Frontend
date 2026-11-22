@@ -1,351 +1,239 @@
-import { NavLink } from "react-router-dom";
-import { FaPlay, FaMusic, FaArrowRight, FaSearch } from "react-icons/fa";
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import debounce from "debounce";
+import { FaCompass, FaHistory, FaSearch, FaTimes } from "react-icons/fa";
+import { MusicCard, TrackRow } from "../components/MusicCard.jsx";
+import { Avatar, Button, EmptyState, ErrorState, LoadMore, PageHeader, SkeletonGrid, Tabs } from "../components/ui/index.jsx";
+import { GENRES, genreLabel } from "../constants/index.js";
+import usePageTitle from "../hooks/usePageTitle.js";
+import usePaginatedList from "../hooks/usePaginatedList.js";
+import api, { getErrorMessage } from "../services/api.js";
+import { artistName } from "../utils/format.js";
+import { addRecentSearch, clearRecentSearches, getRecentSearches } from "../utils/recentSearches.js";
 
-import api from "../services/api.js";
-import { MusicCard } from "../components/MusicCard";
-import { MusicPlayer } from "../components/MusicPlayer";
-import { LikeButton } from "../components/LikeButton";
+function Shelf({ title, tracks }) {
+  if (!tracks?.length) return null;
+  return (
+    <section>
+      <h2 className="mb-3 text-lg font-bold text-white">{title}</h2>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+        {tracks.map((music, index) => (
+          <MusicCard key={music._id} music={music} list={tracks} index={index} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SearchResults({ query, results, type, setType }) {
+  const tabs = [
+    { value: "all", label: "All" },
+    { value: "songs", label: "Songs", count: results?.songs?.total },
+    { value: "artists", label: "Artists", count: results?.artists?.total },
+    { value: "albums", label: "Albums", count: results?.albums?.total },
+  ];
+  const songs = results?.songs?.items || [];
+  const artists = results?.artists?.items || [];
+  const albums = results?.albums?.items || [];
+  const nothing = !songs.length && !artists.length && !albums.length;
+
+  return (
+    <div className="space-y-6">
+      <Tabs tabs={tabs} value={type} onChange={setType} />
+      {nothing ? (
+        <EmptyState icon={FaSearch} title={`No results for "${query}"`} message="Check the spelling or try another word." />
+      ) : (
+        <>
+          {(type === "all" || type === "songs") && songs.length > 0 && (
+            <section>
+              <h2 className="mb-2 text-lg font-bold text-white">Songs</h2>
+              <ul className="space-y-1">
+                {songs.map((music, index) => (
+                  <TrackRow key={music._id} music={music} list={songs} index={index} />
+                ))}
+              </ul>
+            </section>
+          )}
+          {(type === "all" || type === "artists") && artists.length > 0 && (
+            <section>
+              <h2 className="mb-2 text-lg font-bold text-white">Artists</h2>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+                {artists.map((artist) => (
+                  <Link key={artist._id} to={`/listener/artists/${artist._id}`} className="flex flex-col items-center rounded-2xl border border-violet-500/10 bg-gray-900/50 p-4 text-center hover:border-violet-500/30">
+                    <Avatar src={artist.avatar} name={artistName(artist)} size="lg" />
+                    <span className="mt-2 truncate text-sm font-semibold text-white">{artistName(artist)}</span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+          {(type === "all" || type === "albums") && albums.length > 0 && (
+            <section>
+              <h2 className="mb-2 text-lg font-bold text-white">Albums</h2>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+                {albums.map((album) => (
+                  <Link key={album._id} to={`/listener/album/${album._id}`} className="rounded-2xl border border-violet-500/10 bg-gray-900/50 p-3 hover:border-violet-500/30">
+                    {album.coverImage ? <img src={album.coverImage} alt="" className="aspect-square w-full rounded-xl object-cover" /> : <div className="aspect-square w-full rounded-xl bg-linear-to-br from-violet-600/40 to-fuchsia-600/30" />}
+                    <p className="mt-2 truncate text-sm font-semibold text-white">{album.title}</p>
+                    <p className="truncate text-xs text-gray-400">{artistName(album.artist)}</p>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 export const Discover = () => {
-  const [musics, setMusics] = useState([]);
-  const [currentMusic, setCurrentMusic] = useState(null);
-
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState(null);
+  usePageTitle("Discover");
+  const [sections, setSections] = useState(null);
+  const [sectionsError, setSectionsError] = useState("");
+  const [genre, setGenre] = useState("");
+  const [query, setQuery] = useState("");
+  const [type, setType] = useState("all");
+  const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
-  const searchRequest = useRef(0);
+  const [searchError, setSearchError] = useState("");
+  const [recent, setRecent] = useState(getRecentSearches);
+  const [retry, setRetry] = useState(0);
+  const requestId = useRef(0);
 
-  const debouncedSearch = useMemo(
+  const loadSections = () => {
+    setSectionsError("");
+    api.get("/music/discover").then(({ data }) => setSections(data)).catch((err) => setSectionsError(getErrorMessage(err)));
+  };
+  useEffect(loadSections, []);
+
+  const genreList = usePaginatedList("/music", { genre, sort: "new" }, { enabled: Boolean(genre), limit: 24 });
+
+  const runSearch = useMemo(
     () =>
-      debounce(async (query, requestId) => {
+      debounce(async (q, searchType, id) => {
         try {
-          setSearching(true);
-
-          const response = await api.get(
-            `/music/search?q=${encodeURIComponent(query)}`,
-          );
-
-          if (requestId === searchRequest.current)
-            setSearchResults(response.data.musics || []);
-        } catch (error) {
-          console.error("Search failed:", error);
-          if (requestId === searchRequest.current) setSearchResults([]);
+          const { data } = await api.get(`/music/search?q=${encodeURIComponent(q)}&type=${searchType}`);
+          if (id !== requestId.current) return;
+          setResults(data);
+          setRecent(addRecentSearch(q));
+        } catch (err) {
+          if (id === requestId.current) setSearchError(getErrorMessage(err, "Search failed"));
         } finally {
-          if (requestId === searchRequest.current) setSearching(false);
+          if (id === requestId.current) setSearching(false);
         }
-      }, 500),
+      }, 350),
     [],
   );
 
   useEffect(() => {
-    const fetchMusics = async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const response = await api.get("/music");
-
-        setMusics(response.data.musics || []);
-      } catch (error) {
-        console.error("Failed to fetch music:", error);
-        setError("Unable to load music.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchMusics();
-  }, []);
-
-  useEffect(() => {
-    const requestId = ++searchRequest.current;
-    const query = searchQuery.trim();
-
-    if (!query) {
-      debouncedSearch.clear();
-      setSearchResults(null);
+    const id = ++requestId.current;
+    const q = query.trim();
+    if (!q) {
+      runSearch.clear();
+      setResults(null);
       setSearching(false);
-      return;
+      return undefined;
     }
-
-    debouncedSearch(query, requestId);
-
-    return () => debouncedSearch.clear();
-  }, [searchQuery, debouncedSearch]);
-
-  const handlePlayMusic = (music) => setCurrentMusic(music);
-  const handleClosePlayer = () => setCurrentMusic(null);
+    setSearching(true);
+    setSearchError("");
+    runSearch(q, type, id);
+    return () => runSearch.clear();
+  }, [query, type, runSearch, retry]);
 
   return (
-    <div className="relative min-h-screen">
-      {/* Keyframes */}
-      <style>{`
-        @keyframes gradientShift {
-          0%, 100% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-        }
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes searchGlow {
-          0%, 100% { box-shadow: 0 0 0 rgba(139, 92, 246, 0); }
-          50% { box-shadow: 0 0 25px rgba(139, 92, 246, 0.25); }
-        }
-        .animate-fade-in-up {
-          animation: fadeInUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-        .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
-        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-        .scrollbar-thin::-webkit-scrollbar-thumb {
-          background: rgba(139, 92, 246, 0.3);
-          border-radius: 6px;
-        }
-        .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-          background: rgba(139, 92, 246, 0.6);
-        }
-      `}</style>
+    <div className="animate-fade-in-up space-y-8">
+      <PageHeader title="Discover" subtitle="Find new songs, artists and albums" icon={FaCompass} />
 
-      {/* Ambient background */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -left-40 top-20 h-96 w-96 animate-pulse rounded-full bg-violet-500/10 blur-[120px]" />
-        <div
-          className="absolute -right-40 bottom-20 h-96 w-96 animate-pulse rounded-full bg-fuchsia-600/8 blur-[120px]"
-          style={{ animationDelay: "1.5s" }}
+      <div className="relative">
+        <FaSearch className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" aria-hidden="true" />
+        <input
+          type="search"
+          value={query}
+          maxLength={50}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search songs, artists or albums"
+          aria-label="Search songs, artists or albums"
+          className="min-h-12 w-full rounded-2xl border border-violet-500/20 bg-gray-900/70 pl-11 pr-11 text-white placeholder-gray-500 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/30"
         />
+        {query && (
+          <button type="button" onClick={() => setQuery("")} className="absolute right-3 top-1/2 flex h-8 w-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-gray-400 hover:text-white" aria-label="Clear search">
+            <FaTimes aria-hidden="true" />
+          </button>
+        )}
       </div>
 
-      <div className="relative z-10 px-8 py-10 animate-fade-in-up">
-        {/* Header */}
-        <div>
-          <p className="inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/5 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-violet-400 backdrop-blur-sm">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
-            </span>
-            Trending now
-          </p>
-
-          <h1 className="mt-4 text-4xl font-black leading-tight tracking-tight sm:text-5xl">
-            <span className="bg-linear-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">
-              Discover
-            </span>
-          </h1>
+      {!query && recent.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <FaHistory className="text-gray-500" aria-hidden="true" />
+          {recent.map((q) => (
+            <button key={q} type="button" onClick={() => setQuery(q)} className="min-h-8 cursor-pointer rounded-full border border-violet-500/20 px-3 text-xs text-gray-300 hover:border-violet-400/50 hover:text-white">
+              {q}
+            </button>
+          ))}
+          <button type="button" onClick={() => setRecent(clearRecentSearches())} className="cursor-pointer text-xs text-gray-500 underline hover:text-gray-300">
+            Clear
+          </button>
         </div>
+      )}
 
-        {/* Search Bar */}
-        <div
-          className="relative mt-6 max-w-md rounded-xl p-px transition-all duration-300"
-          style={{ animation: "searchGlow 4s ease-in-out infinite" }}
-        >
-          {/* Gradient border */}
-          <div
-            className="absolute inset-0 rounded-xl bg-linear-to-r from-violet-500/40 via-fuchsia-500/40 to-purple-500/40 opacity-70"
-            style={{
-              backgroundSize: "200% 200%",
-              animation: "gradientShift 5s ease infinite",
-            }}
-          />
-
-          <div className="relative flex items-center rounded-[calc(0.75rem-1px)] bg-gray-950/90 backdrop-blur-md">
-            <FaSearch className="absolute left-4 text-sm text-violet-400" />
-
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search songs or artists..."
-              className="w-full rounded-xl bg-transparent py-3 pl-11 pr-4 text-white outline-none placeholder-gray-500"
-            />
+      {query.trim() ? (
+        searchError ? (
+          <ErrorState message={searchError} onRetry={() => setRetry((n) => n + 1)} />
+        ) : searching && !results ? (
+          <SkeletonGrid count={6} />
+        ) : (
+          results && <SearchResults query={query.trim()} results={results} type={type} setType={setType} />
+        )
+      ) : (
+        <>
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin" role="group" aria-label="Browse by genre">
+            <button type="button" onClick={() => setGenre("")} aria-pressed={!genre} className={`min-h-9 shrink-0 cursor-pointer rounded-full px-4 text-sm font-medium ${!genre ? "bg-violet-500/30 text-white" : "border border-violet-500/20 text-gray-300 hover:text-white"}`}>
+              For you
+            </button>
+            {GENRES.map((g) => (
+              <button key={g} type="button" onClick={() => setGenre(g)} aria-pressed={genre === g} className={`min-h-9 shrink-0 cursor-pointer rounded-full px-4 text-sm font-medium ${genre === g ? "bg-violet-500/30 text-white" : "border border-violet-500/20 text-gray-300 hover:text-white"}`}>
+                {genreLabel(g)}
+              </button>
+            ))}
           </div>
-        </div>
 
-        {searchResults !== null ? (
-          <section className="mt-10">
-            <div className="mb-6 flex items-center gap-3">
-              <h2 className="text-2xl font-bold">
-                {searching ? (
-                  <span className="text-violet-300">Searching...</span>
-                ) : (
-                  <>
-                    Results for{" "}
-                    <span className="bg-linear-to-r from-violet-300 via-fuchsia-300 to-purple-300 bg-clip-text text-transparent">
-                      "{searchQuery.trim()}"
-                    </span>
-                  </>
-                )}
-              </h2>
-              {searching && (
-                <span className="relative flex h-2.5 w-2.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-violet-500" />
-                </span>
+          {genre ? (
+            genreList.error ? (
+              <ErrorState message={genreList.error} onRetry={genreList.reload} />
+            ) : genreList.loading ? (
+              <SkeletonGrid />
+            ) : genreList.items.length === 0 ? (
+              <EmptyState icon={FaCompass} title={`No ${genreLabel(genre)} songs yet`} message="Try another genre." action={<Button variant="secondary" onClick={() => setGenre("")}>Back to For you</Button>} />
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+                  {genreList.items.map((music, index) => (
+                    <MusicCard key={music._id} music={music} list={genreList.items} index={index} />
+                  ))}
+                </div>
+                <LoadMore hasMore={genreList.hasMore} loading={genreList.loadingMore} onClick={genreList.loadMore} />
+              </>
+            )
+          ) : sectionsError ? (
+            <ErrorState message={sectionsError} onRetry={loadSections} />
+          ) : !sections ? (
+            <SkeletonGrid count={12} />
+          ) : (
+            <div className="space-y-10">
+              <Shelf title="Trending this week" tracks={sections.trending} />
+              <Shelf title="New releases" tracks={sections.newReleases} />
+              <Shelf title="New from artists you follow" tracks={sections.fromFollowed} />
+              <Shelf title="Recently played" tracks={sections.recentlyPlayed} />
+              {!sections.trending.length && !sections.newReleases.length && (
+                <EmptyState icon={FaCompass} title="No music yet" message="When artists upload songs, they will appear here." />
               )}
             </div>
-
-            {!searching && searchResults.length === 0 ? (
-              <div className="rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 p-10 text-center backdrop-blur-sm">
-                <FaSearch className="mx-auto text-3xl text-violet-500/40" />
-                <p className="mt-3 text-gray-400">No results found.</p>
-                <p className="mt-1 text-sm text-gray-500">
-                  Try a different keyword or artist name.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 backdrop-blur-sm">
-                {searchResults.map((music) => (
-                  <MusicCard
-                    key={music._id}
-                    music={music}
-                    onPlay={handlePlayMusic}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
-        ) : (
-          <>
-            {/* Recently Added */}
-            <section className="mt-10">
-              <div className="mb-6 flex items-center justify-between">
-                <h2 className="text-2xl font-bold">
-                  <span className="relative">
-                    Recently Added
-                    <span className="absolute -bottom-2 left-0 h-0.5 w-12 rounded-full bg-linear-to-r from-violet-500 to-transparent" />
-                  </span>
-                </h2>
-              </div>
-
-              {loading ? (
-                <div className="rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 p-10 text-center backdrop-blur-sm">
-                  <div className="mx-auto flex h-10 w-10 items-center justify-center">
-                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-500/30 border-t-violet-500" />
-                  </div>
-                  <p className="mt-4 text-gray-400">Loading music...</p>
-                </div>
-              ) : musics.length === 0 ? (
-                <div className="rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 p-10 text-center backdrop-blur-sm">
-                  <FaMusic className="mx-auto text-3xl text-violet-500/40" />
-                  <p className="mt-3 text-gray-400">No music available yet.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
-                  {musics.slice(0, 4).map((music) => (
-                    <div
-                      key={music._id}
-                      className="group relative overflow-hidden rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 p-4 backdrop-blur-sm transition-all duration-500 hover:-translate-y-1 hover:border-violet-500/30 hover:shadow-[0_20px_60px_-15px_rgba(139,92,246,0.4)]"
-                    >
-                      {/* Corner glow */}
-                      <div className="pointer-events-none absolute -right-10 -top-10 h-24 w-24 rounded-full bg-violet-500/10 blur-2xl transition-all duration-500 group-hover:bg-violet-500/25" />
-
-                      <div className="relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-linear-to-br from-violet-500/20 via-fuchsia-500/10 to-gray-800">
-                        {music.coverImage ? (
-                          <img
-                            src={music.coverImage}
-                            alt={music.title}
-                            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                          />
-                        ) : (
-                          <FaMusic className="text-6xl text-violet-400/70" />
-                        )}
-
-                        {/* Gradient overlay on hover */}
-                        <div className="absolute inset-0 bg-linear-to-t from-gray-950/60 via-transparent to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-
-                        <button
-                          onClick={() => handlePlayMusic(music)}
-                          className="absolute bottom-3 right-3 flex h-11 w-11 translate-y-2 items-center justify-center rounded-full bg-linear-to-br from-violet-500 to-fuchsia-500 text-white opacity-0 shadow-[0_0_25px_rgba(139,92,246,0.6)] transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100 hover:scale-110"
-                        >
-                          <FaPlay className="ml-0.5 text-sm" />
-                        </button>
-                      </div>
-
-                      <h3 className="relative mt-4 truncate font-bold transition-colors duration-300 group-hover:text-violet-300">
-                        {music.title}
-                      </h3>
-                      <p className="relative mt-1 truncate text-sm text-gray-400">
-                        {music.artist?.username || "Unknown Artist"}
-                      </p>
-                      <div className="relative mt-2">
-                        <LikeButton musicId={music._id} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* All Songs */}
-            <section className="mt-12">
-              <div className="mb-6">
-                <h2 className="text-2xl font-bold">
-                  <span className="relative">
-                    All Songs
-                    <span className="absolute -bottom-2 left-0 h-0.5 w-12 rounded-full bg-linear-to-r from-violet-500 to-transparent" />
-                  </span>
-                </h2>
-              </div>
-
-              {loading ? (
-                <div className="rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 p-10 text-center backdrop-blur-sm">
-                  <div className="mx-auto flex h-10 w-10 items-center justify-center">
-                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-500/30 border-t-violet-500" />
-                  </div>
-                  <p className="mt-4 text-gray-400">Loading music...</p>
-                </div>
-              ) : error ? (
-                <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-10 text-center backdrop-blur-sm">
-                  <p className="text-red-400">{error}</p>
-                </div>
-              ) : musics.length === 0 ? (
-                <div className="rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 p-10 text-center backdrop-blur-sm">
-                  <FaMusic className="mx-auto text-3xl text-violet-500/40" />
-                  <p className="mt-3 text-gray-400">No music available yet.</p>
-                </div>
-              ) : (
-                <div className="overflow-hidden rounded-2xl border border-gray-800/50 bg-linear-to-b from-gray-900/80 to-gray-950/80 backdrop-blur-sm">
-                  {musics.map((music) => (
-                    <MusicCard
-                      key={music._id}
-                      music={music}
-                      onPlay={handlePlayMusic}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* Browse Albums */}
-            <section className="mt-12 mb-6">
-              <div className="flex items-end justify-between">
-                <h2 className="text-2xl font-bold">
-                  <span className="relative">
-                    Browse Albums
-                    <span className="absolute -bottom-2 left-0 h-0.5 w-12 rounded-full bg-linear-to-r from-violet-500 to-transparent" />
-                  </span>
-                </h2>
-
-                <NavLink
-                  to="/listener/album"
-                  className="group flex items-center gap-2 rounded-full border border-gray-700/50 bg-gray-900/50 px-4 py-2 text-sm font-semibold text-gray-300 backdrop-blur-sm transition-all duration-300 hover:border-violet-500/50 hover:bg-violet-500/5 hover:text-violet-300"
-                >
-                  View all
-                  <FaArrowRight className="text-xs transition-transform duration-300 group-hover:translate-x-1" />
-                </NavLink>
-              </div>
-            </section>
-          </>
-        )}
-
-        {currentMusic && (
-          <MusicPlayer music={currentMusic} onClose={handleClosePlayer} />
-        )}
-      </div>
+          )}
+        </>
+      )}
     </div>
   );
 };
+
+export default Discover;

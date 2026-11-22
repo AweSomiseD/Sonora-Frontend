@@ -1,121 +1,89 @@
-import { useEffect, useState } from "react";
-import { FaHistory, FaUser, FaMusic, FaCompactDisc } from "react-icons/fa";
-
-import api from "../services/api.js";
+import { useState } from "react";
+import { FaHistory } from "react-icons/fa";
+import { Badge, EmptyState, ErrorState, LoadMore, PageHeader, Select, SkeletonList } from "../components/ui/index.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
+import usePaginatedList from "../hooks/usePaginatedList.js";
+import { timeAgo } from "../utils/format.js";
 
 const ACTION_LABELS = {
-  USER_ROLE_CHANGED: "Role Changed",
-  USER_BANNED: "User Banned",
-  USER_UNBANNED: "User Unbanned",
-  USER_DELETED: "User Deleted",
-  MUSIC_DELETED: "Music Deleted",
-  ALBUM_DELETED: "Album Deleted",
+  USER_ROLE_CHANGED: "Role changed",
+  ADMIN_ROLE_CHANGED: "Admin role changed",
+  USER_BANNED: "User banned",
+  USER_UNBANNED: "User unbanned",
+  USER_DELETED: "User deleted",
+  USER_WARNED: "User warned",
+  MUSIC_DELETED: "Track deleted",
+  MUSIC_HIDDEN: "Track hidden",
+  MUSIC_RESTORED: "Track restored",
+  ALBUM_DELETED: "Album deleted",
+  ALBUM_HIDDEN: "Album hidden",
+  PLAYLIST_HIDDEN: "Playlist hidden",
+  PLAYLIST_DELETED: "Playlist deleted",
+  ARTIST_REQUEST_APPROVED: "Artist request approved",
+  ARTIST_REQUEST_REJECTED: "Artist request rejected",
+  ARTIST_REVOKED: "Artist access revoked",
+  ARTIST_RESTORED: "Artist access granted",
+  REPORT_RESOLVED: "Report resolved",
+  REPORT_DISMISSED: "Report dismissed",
 };
 
-const TARGET_ICONS = {
-  user: FaUser,
-  music: FaMusic,
-  album: FaCompactDisc,
+const toneFor = (action) => {
+  if (/DELETED|BANNED|REVOKED|REJECTED/.test(action)) return "red";
+  if (/HIDDEN|WARNED/.test(action)) return "yellow";
+  if (/APPROVED|RESTORED|UNBANNED|RESOLVED/.test(action)) return "green";
+  return "violet";
 };
+
+// Shows a few useful details without dumping raw JSON
+const describe = (details = {}) =>
+  ["username", "title", "artistName", "reason", "action", "note", "role", "from", "to"]
+    .filter((key) => details[key] !== undefined && details[key] !== null && details[key] !== "")
+    .map((key) => `${key}: ${Array.isArray(details[key]) ? details[key].join(", ") : details[key]}`)
+    .join(" · ");
+
+const OPTIONS = [{ value: "all", label: "All actions" }, ...Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label }))];
 
 export const AdminAuditLog = () => {
-  const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const fetchLogs = async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const response = await api.get("/admin/audit-logs");
-
-        setLogs(response.data.logs || []);
-      } catch (error) {
-        console.error("Failed to fetch audit logs:", error);
-        setError("Unable to load audit logs.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchLogs();
-  }, []);
-
-  const describeLog = (log) => {
-    const details = log.details || {};
-
-    if (log.action === "USER_ROLE_CHANGED") {
-      return `${details.username || "A user"}'s role changed from ${details.from} to ${details.to}`;
-    }
-    if (log.action === "USER_BANNED" || log.action === "USER_UNBANNED") {
-      return `${details.username || "A user"}`;
-    }
-    if (log.action === "USER_DELETED") {
-      return `${details.username || "A user"} (${details.email || "no email"})`;
-    }
-    if (log.action === "MUSIC_DELETED") {
-      return `"${details.title || "Untitled"}"`;
-    }
-    if (log.action === "ALBUM_DELETED") {
-      return `"${details.title || "Untitled"}"`;
-    }
-    return "";
-  };
+  usePageTitle("Audit log");
+  const [action, setAction] = useState("all");
+  const list = usePaginatedList("/admin/audit-logs", { action }, { limit: 25 });
 
   return (
-    <div className="px-8 py-10">
-      <p className="text-sm font-medium text-amber-500">Accountability</p>
-      <h1 className="mt-1 text-3xl font-bold">Audit Log</h1>
-
-      {loading ? (
-        <div className="mt-8 rounded-2xl border border-gray-800 bg-gray-900 p-8 text-center">
-          <p className="text-gray-400">Loading audit logs...</p>
-        </div>
-      ) : error ? (
-        <div className="mt-8 rounded-2xl border border-red-900 bg-red-950/30 p-8 text-center">
-          <p className="text-red-400">{error}</p>
-        </div>
-      ) : logs.length === 0 ? (
-        <div className="mt-8 rounded-2xl border border-dashed border-gray-700 bg-gray-900 p-10 text-center">
-          <FaHistory className="mx-auto text-4xl text-gray-700" />
-          <h3 className="mt-4 text-xl font-bold">No actions logged yet</h3>
-          <p className="mt-2 text-gray-400">
-            Admin actions will appear here as they happen.
-          </p>
-        </div>
+    <div className="animate-fade-in-up">
+      <PageHeader
+        title="Audit log"
+        subtitle="Every admin action, newest first"
+        icon={FaHistory}
+        actions={<Select aria-label="Filter by action" options={OPTIONS} value={action} onChange={(e) => setAction(e.target.value)} />}
+      />
+      {list.loading ? (
+        <SkeletonList count={10} />
+      ) : list.error ? (
+        <ErrorState message={list.error} onRetry={list.reload} />
+      ) : list.items.length === 0 ? (
+        <EmptyState icon={FaHistory} title="No actions yet" message="Admin actions will appear here." />
       ) : (
-        <div className="mt-8 overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
-          {logs.map((log) => {
-            const Icon = TARGET_ICONS[log.targetType] || FaHistory;
-
-            return (
-              <div
-                key={log._id}
-                className="flex items-start gap-4 border-b border-gray-800 p-4 last:border-b-0"
-              >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-500">
-                  <Icon className="text-sm" />
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold">
-                    {ACTION_LABELS[log.action] || log.action}
-                  </p>
-                  <p className="mt-0.5 truncate text-sm text-gray-400">
-                    {describeLog(log)}
-                  </p>
-                  <p className="mt-1 text-xs text-gray-500">
-                    by {log.admin?.username || "Unknown admin"} ·{" "}
-                    {new Date(log.createdAt).toLocaleString()}
-                  </p>
-                </div>
+        <ol className="space-y-2">
+          {list.items.map((log) => (
+            <li key={log._id} className="rounded-xl border border-violet-500/10 bg-gray-900/60 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={toneFor(log.action)}>{ACTION_LABELS[log.action] || log.action}</Badge>
+                <span className="text-sm text-gray-300">
+                  by <span className="font-semibold text-white">{log.admin?.username || "deleted admin"}</span>
+                </span>
+                <span className="text-xs text-gray-500">on {log.targetType}</span>
+                <time className="ml-auto text-xs text-gray-500" dateTime={log.createdAt} title={new Date(log.createdAt).toLocaleString()}>
+                  {timeAgo(log.createdAt)}
+                </time>
               </div>
-            );
-          })}
-        </div>
+              {describe(log.details) && <p className="mt-2 break-words text-xs text-gray-400">{describe(log.details)}</p>}
+            </li>
+          ))}
+        </ol>
       )}
+      <LoadMore hasMore={list.hasMore} loading={list.loadingMore} onClick={list.loadMore} />
     </div>
   );
 };
+
+export default AdminAuditLog;

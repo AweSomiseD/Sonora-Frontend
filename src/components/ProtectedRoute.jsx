@@ -1,19 +1,15 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
+import StatusScreen from "./StatusScreen.jsx";
 
 export const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
+  const location = useLocation();
 
-  // Auth check complete hone ka wait
-  if (loading) {
-    return <div>Checking authentication...</div>;
-  }
-
-  // User authenticated nahi hai
+  if (loading) return <StatusScreen variant="loading" />;
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    const next = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/login?next=${next}`} replace />;
   }
-
-  // User authenticated hai
   return children;
 };

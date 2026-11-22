@@ -1,59 +1,53 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { FaHeart, FaRegHeart } from "react-icons/fa";
-import api from "../services/api.js";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext.jsx";
+import api, { getErrorMessage } from "../services/api.js";
 
-export const LikeButton = ({ musicId }) => {
-  const { user, fetchCurrentUser, updateUser } = useAuth();
+// Optimistic like / unlike
+export const LikeButton = ({ musicId, size = "md" }) => {
+  const { user, updateUser } = useAuth();
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
-  const [localLiked, setLocalLiked] = useState(null);
 
-  const serverLiked = user?.likedMusics?.some((id) => id?.toString() === musicId?.toString()) || false;
-  const liked = localLiked === null ? serverLiked : localLiked;
+  const likedIds = (user?.likedMusics || []).map(String);
+  const liked = likedIds.includes(String(musicId));
 
-  useEffect(() => setLocalLiked(null), [serverLiked, musicId]);
-
-  const handleClick = async (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-
-    if (loading) return;
+  const toggle = async (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    if (loading || !musicId) return;
 
     setLoading(true);
-
+    const optimistic = liked ? likedIds.filter((id) => id !== String(musicId)) : [...likedIds, String(musicId)];
+    updateUser({ likedMusics: optimistic });
     try {
-      const response = await api.post(`/music/${musicId}/like`);
-      const nextLiked = response.data.liked;
-      setLocalLiked(nextLiked);
-      const ids = (user?.likedMusics || []).map((id) => id.toString());
-      updateUser({
-        likedMusics: nextLiked
-          ? [...ids, musicId]
-          : ids.filter((id) => id !== musicId),
-      });
-      await fetchCurrentUser(true);
+      const { data } = await api.post(`/music/${musicId}/like`);
+      updateUser({ likedMusics: data.liked ? [...new Set([...likedIds, String(musicId)])] : likedIds.filter((id) => id !== String(musicId)) });
     } catch (error) {
-      console.error("Failed to toggle like:", error);
+      updateUser({ likedMusics: likedIds }); // undo
+      showToast(getErrorMessage(error, "Could not update your likes"), "error");
     } finally {
       setLoading(false);
     }
   };
 
+  const dimension = size === "sm" ? "h-8 w-8" : "h-10 w-10";
+
   return (
     <button
-      onClick={handleClick}
+      type="button"
+      onClick={toggle}
       disabled={loading}
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition ${
-        liked
-          ? "text-red-500 hover:bg-red-500/10"
-          : "text-gray-500 hover:bg-gray-800 hover:text-red-400"
+      aria-pressed={liked}
+      aria-label={liked ? "Remove from liked songs" : "Add to liked songs"}
+      className={`flex ${dimension} shrink-0 cursor-pointer items-center justify-center rounded-full transition disabled:opacity-60 ${
+        liked ? "text-fuchsia-400 hover:bg-fuchsia-500/10" : "text-gray-500 hover:bg-white/5 hover:text-fuchsia-300"
       }`}
     >
-      {liked ? (
-        <FaHeart className="text-sm" />
-      ) : (
-        <FaRegHeart className="text-sm" />
-      )}
+      {liked ? <FaHeart className="text-sm" aria-hidden="true" style={{ animation: "heartBeat 0.4s ease" }} /> : <FaRegHeart className="text-sm" aria-hidden="true" />}
     </button>
   );
 };
+
+export default LikeButton;

@@ -1,96 +1,62 @@
 import { useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { FaCheck, FaTimes } from "react-icons/fa";
+import AuthCard from "../components/AuthCard.jsx";
+import { Button, PasswordInput } from "../components/ui/index.jsx";
+import { PASSWORD_RULES, isStrongPassword } from "../constants/index.js";
+import { useToast } from "../context/ToastContext.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
+import api, { getErrorMessage } from "../services/api.js";
 
 export const ResetPassword = () => {
+  usePageTitle("Reset password");
   const { token } = useParams();
   const navigate = useNavigate();
-
+  const { showToast } = useToast();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!isStrongPassword(password)) return setError("Password does not meet the requirements");
+    if (password !== confirmPassword) return setError("Passwords do not match");
 
-    if (!password || !confirmPassword) {
-      setMessage("Both password fields are required");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setMessage("Passwords do not match");
-      return;
-    }
-
+    setLoading(true);
+    setError("");
     try {
-      setLoading(true);
-
-      const response = await fetch(
-        `http://localhost:3000/api/auth/reset-password/${token}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            newPassword: password,
-          }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setMessage(data.message);
-
-        setTimeout(() => {
-          navigate("/login");
-        }, 2000);
-      } else {
-        setMessage(data.message || "Password reset failed");
-      }
-    } catch (error) {
-      console.error("Reset password error:", error);
-      setMessage("Something went wrong");
+      const { data } = await api.post(`/auth/reset-password/${token}`, { newPassword: password }, { skipAuthRefresh: true });
+      showToast(data.message, "success");
+      navigate("/login", { replace: true });
+    } catch (err) {
+      setError(getErrorMessage(err, "Password reset failed"));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-lg">
-        <h1 className="mb-6 text-center text-2xl font-bold">Reset Password</h1>
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <input
-            type="password"
-            placeholder="New Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="rounded-lg border p-3"
-          />
-
-          <input
-            type="password"
-            placeholder="Confirm New Password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            className="rounded-lg border p-3"
-          />
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="rounded-lg bg-black p-3 text-white"
-          >
-            {loading ? "Resetting..." : "Reset Password"}
-          </button>
-        </form>
-
-        {message && <p className="mt-4 text-center">{message}</p>}
-      </div>
-    </div>
+    <AuthCard title="Choose a new password" subtitle="All your other sessions will be logged out." footer={<Link to="/login" className="font-semibold text-violet-300 hover:underline">Back to login</Link>}>
+      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+        <PasswordInput label="New password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" required />
+        <ul className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
+          {PASSWORD_RULES.map((rule) => {
+            const ok = rule.test(password);
+            return (
+              <li key={rule.label} className={`flex items-center gap-1.5 ${ok ? "text-emerald-300" : "text-gray-500"}`}>
+                {ok ? <FaCheck aria-hidden="true" /> : <FaTimes aria-hidden="true" />} {rule.label}
+              </li>
+            );
+          })}
+        </ul>
+        <PasswordInput label="Confirm password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" error={error} required />
+        <Button type="submit" className="w-full" loading={loading}>
+          Reset password
+        </Button>
+      </form>
+    </AuthCard>
   );
 };
+
+export default ResetPassword;

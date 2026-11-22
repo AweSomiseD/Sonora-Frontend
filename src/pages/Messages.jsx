@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FaComments, FaSearch } from "react-icons/fa";
+import { FaArrowLeft, FaComments, FaSearch } from "react-icons/fa";
 import api from "../services/api.js";
 import socket from "../socket.js";
 import { useLocation } from "react-router-dom";
 import debounce from "debounce";
 import { useAuth } from "../context/AuthContext.jsx";
+import { useNotifications } from "../context/NotificationContext.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
+import PremiumBadge from "../components/PremiumBadge.jsx";
 
 export const Messages = () => {
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, activeRole } = useAuth();
+  const { refreshMessages } = useNotifications();
+  usePageTitle("Messages");
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -57,6 +62,7 @@ export const Messages = () => {
   };
 
   const markConversationRead = (conversationId) => {
+    setTimeout(refreshMessages, 300);
     if (!socket.connected || !socket.isReady) return;
 
     socket
@@ -232,7 +238,7 @@ export const Messages = () => {
           ];
         });
       } catch (error) {
-        console.error("Load messages error:", error);
+        void ("Load messages error:", error);
         if (active) setMessagesError("Messages could not be loaded.");
       } finally {
         if (active) setMessagesLoading(false);
@@ -374,6 +380,10 @@ export const Messages = () => {
     };
 
     const handleNewMessage = (message) => {
+      // Chats of the other dashboard (dual-role users) are handled by the
+      // notification badge + toast, not by this inbox.
+      if (message.conversationMode && message.conversationMode !== activeRole)
+        return;
       const conversationId = String(message.conversation);
       const messageId = String(message._id);
       if (!messageId || seenMessageIdsRef.current.has(messageId)) return;
@@ -404,7 +414,7 @@ export const Messages = () => {
             );
           })
           .catch((error) => {
-            console.error("Refresh conversations error:", error);
+            void ("Refresh conversations error:", error);
           });
       }
 
@@ -444,7 +454,13 @@ export const Messages = () => {
       socket.off("message:new", handleNewMessage);
       socket.off("conversation:read", handleReadReceipt);
     };
-  }, [selectedConversation?._id, user?._id, user?.id, conversations]);
+  }, [
+    selectedConversation?._id,
+    user?._id,
+    user?.id,
+    conversations,
+    activeRole,
+  ]);
 
   useEffect(() => {
     const container = messagesContainerRef.current;
@@ -460,7 +476,7 @@ export const Messages = () => {
         setConversations(response.data.conversations || []);
         setConversationsError("");
       } catch (error) {
-        console.error("Load conversations error:", error);
+        void ("Load conversations error:", error);
         setConversationsError("Conversations could not be loaded.");
       } finally {
         setLoading(false);
@@ -493,22 +509,7 @@ export const Messages = () => {
   };
 
   return (
-    <div className="relative h-[calc(100vh-73px)] overflow-hidden">
-      {/* Keyframes */}
-      <style>{`
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes pulseDot {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.6; transform: scale(1.3); }
-        }
-        .animate-fade-in-up {
-          animation: fadeInUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-      `}</style>
-
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* Ambient background */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute -left-40 top-20 h-96 w-96 animate-pulse rounded-full bg-violet-500/10 blur-[120px]" />
@@ -518,12 +519,16 @@ export const Messages = () => {
         />
       </div>
 
-      <div className="relative z-10 h-full p-6 animate-fade-in-up">
-        <div className="flex h-full overflow-hidden rounded-2xl border border-violet-500/20 bg-gray-900/60 backdrop-blur-xl shadow-[0_20px_60px_-15px_rgba(139,92,246,0.25)]">
+      <div className="relative z-10 flex h-full min-h-0 flex-col p-3 animate-fade-in-up sm:p-6">
+        <div className="flex h-full min-h-0 overflow-hidden rounded-2xl border border-violet-500/20 bg-gray-900/60 shadow-[0_20px_60px_-15px_rgba(139,92,246,0.25)] backdrop-blur-xl">
           {/* ========================================
               Conversations Sidebar
           ======================================== */}
-          <aside className="flex w-80 shrink-0 flex-col border-r border-violet-500/10">
+          <aside
+            className={`min-h-0 w-full shrink-0 flex-col border-r border-violet-500/10 md:w-80 md:flex ${
+              selectedConversation ? "hidden" : "flex"
+            }`}
+          >
             {/* Header */}
             <div className="border-b border-violet-500/10 p-5">
               <h1 className="text-2xl font-black">
@@ -578,16 +583,14 @@ export const Messages = () => {
                               "U"}
                           </div>
 
-                          <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-2">
                             <p className="truncate text-sm font-semibold text-white">
                               {conversation.otherUser?.username ||
                                 "Unknown user"}
                             </p>
-
-                            <p className="mt-1 truncate text-xs text-gray-500">
-                              {conversation.lastMessage?.preview ||
-                                "No messages yet"}
-                            </p>
+                            {conversation.otherUser?.isPremium && (
+                              <PremiumBadge />
+                            )}
                           </div>
                         </button>
                       ))}
@@ -652,16 +655,16 @@ export const Messages = () => {
                         : "hover:bg-violet-500/5"
                     }`}
                   >
-                    <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-violet-500/30 bg-linear-to-br from-violet-500/25 to-fuchsia-500/15 font-bold text-violet-300">
-                      {conversation.otherUser?.username?.[0]?.toUpperCase() ||
-                        "U"}
-                    </div>
-
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="truncate text-sm font-semibold text-white">
-                          {conversation.otherUser?.username || "Unknown user"}
-                        </p>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="truncate text-sm font-semibold text-white">
+                            {conversation.otherUser?.username || "Unknown user"}
+                          </p>
+                          {conversation.otherUser?.isPremium && (
+                            <PremiumBadge />
+                          )}
+                        </div>
 
                         {conversation.unreadCount > 0 && (
                           <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-linear-to-r from-red-500 to-rose-500 px-1.5 text-xs font-bold text-white shadow-[0_0_10px_rgba(239,68,68,0.5)]">
@@ -685,9 +688,23 @@ export const Messages = () => {
           {/* ========================================
               Chat Panel
           ======================================== */}
-          <section className="flex min-w-0 flex-1 flex-col">
+          <section
+            className={`min-h-0 min-w-0 flex-1 flex-col ${
+              selectedConversation ? "flex" : "hidden md:flex"
+            }`}
+          >
             {/* Chat Header */}
-            <div className="flex items-center border-b border-violet-500/10 px-6 py-4">
+            <div className="flex items-center border-b border-violet-500/10 px-3 py-4 sm:px-6">
+              {selectedConversation && (
+                <button
+                  type="button"
+                  aria-label="Back to conversations"
+                  onClick={() => setSelectedConversation(null)}
+                  className="mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-300 transition hover:bg-white/5 md:hidden"
+                >
+                  <FaArrowLeft aria-hidden="true" />
+                </button>
+              )}
               {selectedConversation ? (
                 <>
                   <div className="relative h-10 w-10">
@@ -709,10 +726,15 @@ export const Messages = () => {
               )}
 
               <div className="ml-3 min-w-0 flex-1">
-                <h2 className="truncate text-sm font-semibold text-white">
-                  {selectedConversation?.otherUser?.username ||
-                    "Select a conversation to start chatting"}
-                </h2>
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 className="truncate text-sm font-semibold text-white">
+                    {selectedConversation?.otherUser?.username ||
+                      "Select a conversation to start chatting"}
+                  </h2>
+                  {selectedConversation?.otherUser?.isPremium && (
+                    <PremiumBadge />
+                  )}
+                </div>
 
                 <p className="text-xs text-gray-500">
                   {selectedConversation && (
@@ -776,7 +798,7 @@ export const Messages = () => {
                   wasAtBottomRef.current =
                     scrollHeight - scrollTop - clientHeight < 120;
                 }}
-                className="flex-1 overflow-y-auto p-6"
+                className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"
               >
                 {messagesLoading ? (
                   <div className="flex h-full items-center justify-center">
@@ -882,7 +904,7 @@ export const Messages = () => {
             {selectedConversation && (
               <form
                 onSubmit={handleSendMessage}
-                className="border-t border-violet-500/10 p-4"
+                className="shrink-0 border-t border-violet-500/10 p-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] sm:p-4"
               >
                 <div className="flex items-center gap-3">
                   <input
@@ -892,7 +914,7 @@ export const Messages = () => {
                     placeholder="Type a message..."
                     maxLength={2000}
                     disabled={sending}
-                    className="flex-1 rounded-xl border border-gray-700/50 bg-gray-950/60 px-4 py-3 text-sm text-white outline-none transition-all duration-200 placeholder:text-gray-500 focus:border-violet-500/60 focus:ring-4 focus:ring-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-w-0 flex-1 rounded-xl border border-gray-700/50 bg-gray-950/60 px-4 py-3 text-sm text-white outline-none transition-all duration-200 placeholder:text-gray-500 focus:border-violet-500/60 focus:ring-4 focus:ring-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                   />
 
                   <div className="flex items-center gap-2">
